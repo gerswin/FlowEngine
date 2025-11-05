@@ -184,10 +184,6 @@ graph TB
 
     RMQ --> WH
     WEBHOOK --> WH
-
-    style "Domain Layer" fill:#e1f5ff
-    style "Application Layer" fill:#fff4e1
-    style "Infrastructure Layer" fill:#ffe1e1
 ```
 
 ### 2.2 Diagrama de Flujo de una Transición
