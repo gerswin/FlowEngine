@@ -303,10 +303,22 @@ Como actor autorizado, quiero ejecutar transiciones de estado en instancias de w
    **THEN** el sistema SHALL ejecutar todas las actions después de aplicar la transición
    **AND** las actions SHALL ejecutarse de forma asíncrona
 
-9. **IF** otro proceso tiene el lock de la instancia
-   **THEN** el sistema SHALL esperar hasta timeout (5 segundos)
-   **AND** el sistema SHALL retornar HTTP 409 Conflict si no puede adquirir el lock
-   **AND** el mensaje SHALL ser "Instance is locked by another process"
+9. **WHEN** el estado destino es el mismo que el estado origen (loop/stay)
+   **THEN** el sistema SHALL permitir la transición (reentrada)
+   **AND** el sistema SHALL registrar la transición en el historial normalmente
+   **AND** el sistema SHALL considerar esto como transición válida (NO es un error)
+   **EXAMPLE**: Estado "in_progress" con evento "reclassify" que retorna a "in_progress"
+
+10. **WHEN** el estado destino es un estado previamente visitado (reentrada desde otro estado)
+    **THEN** el sistema SHALL permitir la transición sin restricciones
+    **AND** el historial SHALL mostrar claramente la secuencia (ej: A→B→C→B indica reentrada a B)
+    **AND** las métricas SHALL contar esto como transición adicional
+    **EXAMPLE**: "in_review" → "in_progress" (reject) es válido aunque ya se estuvo en "in_progress"
+
+11. **IF** otro proceso tiene el lock de la instancia
+    **THEN** el sistema SHALL esperar hasta timeout (5 segundos)
+    **AND** el sistema SHALL retornar HTTP 409 Conflict si no puede adquirir el lock
+    **AND** el mensaje SHALL ser "Instance is locked by another process"
 
 #### R3.2: Optimistic Locking y Control de Concurrencia
 
@@ -1829,23 +1841,987 @@ Como cliente de la API, quiero recibir metadatos útiles en cada response, para 
 
 ---
 
+### R17: Sistema de Subestados
+
+Los subestados permiten modelar estados internos complejos sin fragmentar el flujo principal del workflow, proporcionando tracking detallado de transiciones dentro de un mismo estado.
+
+#### R17.1: Definir Subestados dentro de Estados
+
+**User Story**
+Como diseñador de workflows, quiero definir subestados dentro de estados principales, para modelar procesos complejos con tracking detallado sin fragmentar el estado principal.
+
+**Acceptance Criteria**
+
+1. **WHEN** se define un estado en el workflow YAML
+   **THEN** el sistema SHALL soportar campo opcional `substates: []`
+   **AND** cada subestado SHALL tener: id, name, description
+   **AND** el sistema SHALL validar que los IDs de subestados sean únicos dentro del estado
+
+2. **WHEN** se valida un workflow con subestados
+   **THEN** el sistema SHALL verificar que cada estado tenga máximo un nivel de subestados (no anidados)
+   **AND** el sistema SHALL validar que si se definen subestados, el primero sea el subestado por defecto
+
+3. **IF** el workflow YAML no define subestados para un estado
+   **THEN** ese estado SHALL NOT soportar subestados
+   **AND** intentar establecer un subestado SHALL retornar error
+
+#### R17.2: Transiciones con Subestados
+
+**User Story**
+Como sistema, quiero gestionar transiciones que cambien subestados sin cambiar el estado principal, para tracking detallado de subprocesos.
+
+**Acceptance Criteria**
+
+1. **WHEN** una instancia entra a un estado con subestados
+   **THEN** el sistema SHALL establecer `current_sub_state` al primer subestado definido
+   **AND** el sistema SHALL persistir `current_sub_state` en tabla `workflow_instances`
+   **AND** `previous_sub_state` SHALL ser NULL en la primera entrada
+
+2. **WHEN** se ejecuta una transición que cambia de estado principal
+   **THEN** el sistema SHALL:
+   - Registrar `from_sub_state` en el historial (si aplica)
+   - Establecer `to_sub_state` según el nuevo estado (si tiene subestados)
+   - Actualizar `current_sub_state` en la instancia
+
+3. **WHEN** se ejecuta una transición que permanece en el mismo estado principal
+   **THEN** el sistema SHALL poder cambiar solo el subestado
+   **AND** el sistema SHALL validar que la transición de subestado sea válida según el workflow
+   **AND** el sistema SHALL registrar `from_sub_state` y `to_sub_state` en `workflow_transitions`
+
+4. **WHEN** una instancia sale de un estado con subestados
+   **THEN** el sistema SHALL limpiar `current_sub_state` a NULL (si el nuevo estado no tiene subestados)
+   **AND** el sistema SHALL preservar `previous_sub_state` para auditoría
+
+5. **IF** se intenta establecer un subestado inválido
+   **THEN** el sistema SHALL retornar HTTP 400 Bad Request
+   **AND** el mensaje SHALL indicar "Invalid substate for current state"
+
+#### R17.3: Persistencia de Subestados
+
+**User Story**
+Como sistema, quiero persistir subestados en la base de datos, para auditoría completa y consultas.
+
+**Acceptance Criteria**
+
+1. **WHEN** se actualiza el schema de base de datos
+   **THEN** la tabla `workflow_instances` SHALL incluir:
+   - `current_sub_state VARCHAR(100)` (nullable)
+   - `previous_sub_state VARCHAR(100)` (nullable)
+
+2. **WHEN** se actualiza el schema de transiciones
+   **THEN** la tabla `workflow_transitions` SHALL incluir:
+   - `from_sub_state VARCHAR(100)` (nullable)
+   - `to_sub_state VARCHAR(100)` (nullable)
+
+3. **WHEN** se consulta el historial de una instancia
+   **THEN** cada transición SHALL incluir campos de subestados (si aplican)
+   **AND** el sistema SHALL mostrar claramente transiciones de solo subestado vs estado completo
+
+4. **IF** se crean índices para queries
+   **THEN** el sistema SHALL crear índice compuesto: `(current_state, current_sub_state, status)`
+
+#### R17.4: API para Subestados
+
+**User Story**
+Como cliente de la API, quiero consultar y filtrar instancias por subestados, para reporting detallado.
+
+**Acceptance Criteria**
+
+1. **WHEN** se consulta una instancia mediante GET /api/v1/instances/:id
+   **THEN** la respuesta SHALL incluir:
+   ```json
+   {
+     "current_state": "in_progress",
+     "current_sub_state": "escalated_awaiting_response",
+     "previous_state": "assigned",
+     "previous_sub_state": null
+   }
+   ```
+
+2. **WHEN** se ejecuta query de instancias mediante POST /api/v1/queries/instances
+   **THEN** el sistema SHALL soportar filtro `sub_states: ["working", "escalated"]`
+   **AND** el filtro SHALL aplicarse solo a instancias en estados que soporten subestados
+
+3. **WHEN** se solicita el historial mediante GET /api/v1/instances/:id/history
+   **THEN** cada transición SHALL incluir:
+   ```json
+   {
+     "from_state": "in_progress",
+     "from_sub_state": "working",
+     "to_state": "in_progress",
+     "to_sub_state": "escalated_awaiting_response",
+     "event": "escalate"
+   }
+   ```
+
+---
+
+### R18: Escalamientos Manuales
+
+El sistema debe permitir escalar instancias a departamentos o usuarios externos para consulta especializada, manteniendo el estado principal y creando un registro de auditoría.
+
+#### R18.1: Escalar Instancia a Departamento
+
+**User Story**
+Como gestionador, quiero escalar un documento a otro departamento para consulta especializada, sin cambiar el estado principal del workflow.
+
+**Acceptance Criteria**
+
+1. **WHEN** el usuario ejecuta escalamiento mediante POST /api/v1/instances/:id/escalate
+   **THEN** el sistema SHALL validar que la instancia exista
+   **AND** el sistema SHALL validar que el estado actual permita escalamientos (según workflow config)
+   **AND** el request SHALL incluir: `department_id`, `reason`
+   **AND** el sistema SHALL validar que el actor tenga permisos para escalar
+
+2. **WHEN** se configura escalamiento en workflow YAML
+   **THEN** el sistema SHALL soportar configuración:
+   ```yaml
+   states:
+     - id: in_progress
+       allow_escalation: true
+       escalation_guard: has_role:gestionador
+   ```
+
+3. **WHEN** se crea un escalamiento válido
+   **THEN** el sistema SHALL crear registro en tabla `workflow_escalations` con:
+   - `id` (UUID)
+   - `instance_id` (FK a workflow_instances)
+   - `department_id`
+   - `reason` (TEXT)
+   - `escalated_by` (actor que escaló)
+   - `escalated_at` (timestamp)
+   - `status` = "pending"
+   **AND** el sistema SHALL cambiar `current_sub_state` a configuración del workflow (ej: "escalated_awaiting_response")
+   **AND** el sistema SHALL generar evento de dominio "DocumentEscalated"
+
+4. **WHEN** el escalamiento se crea exitosamente
+   **THEN** el sistema SHALL retornar HTTP 201 Created
+   **AND** la respuesta SHALL incluir:
+   ```json
+   {
+     "escalation_id": "esc-uuid",
+     "instance_id": "inst-uuid",
+     "department_id": "legal",
+     "status": "pending",
+     "escalated_at": "2025-11-05T10:00:00Z"
+   }
+   ```
+
+5. **IF** el estado actual no permite escalamientos
+   **THEN** el sistema SHALL retornar HTTP 409 Conflict
+   **AND** el mensaje SHALL ser "Escalation not allowed from current state"
+
+6. **IF** ya existe un escalamiento pendiente al mismo departamento
+   **THEN** el sistema SHALL permitir crear otro escalamiento (no limitar)
+   **OR** el sistema SHALL retornar error si la configuración lo indica
+
+#### R18.2: Responder Escalamiento
+
+**User Story**
+Como departamento especializado, quiero responder a escalamientos enviando mi conclusión, para que el gestor continúe el proceso.
+
+**Acceptance Criteria**
+
+1. **WHEN** se responde un escalamiento mediante POST /api/v1/instances/:id/escalation-reply
+   **THEN** el sistema SHALL validar que el escalamiento exista
+   **AND** el sistema SHALL validar que `status = "pending"`
+   **AND** el request SHALL incluir: `escalation_id`, `response` (TEXT)
+
+2. **WHEN** la respuesta es válida
+   **THEN** el sistema SHALL actualizar el registro de escalamiento:
+   - `response` = contenido de la respuesta
+   - `responded_by` = actor que responde
+   - `responded_at` = NOW()
+   - `status` = "responded"
+   **AND** el sistema SHALL cambiar `current_sub_state` según configuración (ej: "escalation_responded")
+   **AND** el sistema SHALL generar evento "EscalationReplied"
+
+3. **WHEN** se genera el evento "EscalationReplied"
+   **THEN** el evento SHALL incluir:
+   - `instance_id`
+   - `escalation_id`
+   - `department_id`
+   - `response` (resumen o completo según config)
+   - `responded_by`
+
+4. **IF** se configuran notificaciones
+   **THEN** el sistema SHALL notificar al gestor original del escalamiento
+   **AND** la notificación SHALL incluir el response del departamento
+
+5. **IF** el escalamiento ya fue respondido
+   **THEN** el sistema SHALL retornar HTTP 409 Conflict
+   **AND** el mensaje SHALL ser "Escalation already responded"
+
+#### R18.3: Consultar Escalamientos
+
+**User Story**
+Como usuario, quiero consultar los escalamientos de una instancia, para seguimiento del proceso.
+
+**Acceptance Criteria**
+
+1. **WHEN** se consultan escalamientos mediante GET /api/v1/instances/:id/escalations
+   **THEN** el sistema SHALL retornar todos los escalamientos de la instancia
+   **AND** los escalamientos SHALL estar ordenados por `escalated_at DESC`
+   **AND** cada escalamiento SHALL incluir:
+   ```json
+   {
+     "id": "esc-uuid",
+     "department_id": "legal",
+     "reason": "Requiere revisión legal",
+     "status": "responded",
+     "escalated_by": "user-123",
+     "escalated_at": "2025-11-05T10:00:00Z",
+     "response": "Aprobado legalmente",
+     "responded_by": "user-legal-01",
+     "responded_at": "2025-11-05T14:00:00Z"
+   }
+   ```
+
+2. **WHEN** se consulta un escalamiento específico mediante GET /api/v1/escalations/:escalation_id
+   **THEN** el sistema SHALL retornar detalles completos del escalamiento
+   **AND** la respuesta SHALL incluir link a la instancia relacionada
+
+3. **WHEN** se consultan escalamientos pendientes por departamento
+   **THEN** el endpoint GET /api/v1/queries/escalations?department_id=legal&status=pending
+   **SHALL** retornar todos los escalamientos pendientes para ese departamento
+   **AND** soportar paginación con limit/offset
+
+4. **IF** se implementan métricas
+   **THEN** el sistema SHALL exponer:
+   - `escalations_total{department_id, status}`
+   - `escalation_response_duration_seconds` (tiempo de respuesta)
+
+#### R18.4: Cerrar o Cancelar Escalamientos
+
+**User Story**
+Como gestionador, quiero poder cerrar o cancelar escalamientos que ya no son necesarios.
+
+**Acceptance Criteria**
+
+1. **WHEN** se cierra un escalamiento mediante POST /api/v1/escalations/:id/close
+   **THEN** el sistema SHALL cambiar `status` a "closed"
+   **AND** el sistema SHALL registrar `closed_by` y `closed_at`
+   **AND** el sistema SHALL generar evento "EscalationClosed"
+
+2. **WHEN** se cancela un escalamiento mediante DELETE /api/v1/escalations/:id
+   **THEN** el sistema SHALL validar que `status = "pending"` (solo pendientes pueden cancelarse)
+   **AND** el sistema SHALL cambiar `status` a "canceled"
+   **AND** el sistema SHALL retornar el subestado al valor previo al escalamiento
+
+3. **IF** el escalamiento ya fue respondido
+   **THEN** no se puede cancelar, solo cerrar
+
+---
+
+### R19: Reclasificación de Instancias
+
+El sistema debe permitir cambiar el tipo o categoría de una instancia sin alterar su estado en el workflow, para corregir clasificaciones erróneas o adaptarse a cambios de normativa.
+
+#### R19.1: Reclasificar Tipo de Documento
+
+**User Story**
+Como gestionador senior, quiero reclasificar un documento a otro tipo (ej: PQRD → Control Interno), sin cambiar su estado en el workflow.
+
+**Acceptance Criteria**
+
+1. **WHEN** se ejecuta reclasificación mediante POST /api/v1/instances/:id/reclassify
+   **THEN** el sistema SHALL validar que la instancia exista
+   **AND** el request SHALL incluir: `new_type`, `reason`
+   **AND** el sistema SHALL validar que `new_type` sea diferente del tipo actual
+
+2. **WHEN** se configura reclasificación en workflow YAML
+   **THEN** el sistema SHALL soportar:
+   ```yaml
+   reclassification:
+     enabled: true
+     allowed_types: ["PQRD", "Control", "Queja", "Reclamo", "Sugerencia"]
+     allowed_from_states: ["in_progress", "in_review"]
+     required_role: gestionador
+     requires_senior: true  # Solo gestionadores senior
+   ```
+
+3. **WHEN** se valida la reclasificación
+   **THEN** el sistema SHALL ejecutar guard personalizado (si configurado)
+   **AND** el guard SHALL verificar:
+   - Actor tiene rol requerido
+   - Estado actual permite reclasificación
+   - new_type está en la lista de tipos permitidos
+   - Actor tiene flag `is_senior = true` (si requires_senior)
+
+4. **WHEN** la reclasificación es válida
+   **THEN** el sistema SHALL:
+   - Actualizar `data.tipo` (o campo configurado) con new_type
+   - Mantener `current_state` sin cambios
+   - Incrementar `version`
+   - Crear registro en `workflow_transitions` con `event = "reclassify"`
+   - Incluir `reason` en el campo `reason` de la transición
+   - Agregar metadata: `{"from_type": "...", "to_type": "..."}`
+   **AND** el sistema SHALL generar evento "DocumentReclassified"
+
+5. **WHEN** se genera el evento "DocumentReclassified"
+   **THEN** el evento SHALL incluir:
+   ```json
+   {
+     "type": "document.reclassified",
+     "instance_id": "inst-uuid",
+     "from_type": "Consulta",
+     "to_type": "PQRD",
+     "reason": "Análisis indica que es petición formal",
+     "actor_id": "user-senior-01",
+     "occurred_at": "2025-11-05T10:00:00Z"
+   }
+   ```
+
+6. **WHEN** la reclasificación se completa exitosamente
+   **THEN** el sistema SHALL retornar HTTP 200 OK
+   **AND** la respuesta SHALL incluir:
+   ```json
+   {
+     "instance_id": "inst-uuid",
+     "from_type": "Consulta",
+     "to_type": "PQRD",
+     "current_state": "in_progress",
+     "version": 5,
+     "reclassified_at": "2025-11-05T10:00:00Z"
+   }
+   ```
+
+7. **IF** el actor no tiene permisos
+   **THEN** el sistema SHALL retornar HTTP 403 Forbidden
+   **AND** el mensaje SHALL indicar el permiso faltante
+
+8. **IF** el estado actual no permite reclasificación
+   **THEN** el sistema SHALL retornar HTTP 409 Conflict
+   **AND** el mensaje SHALL ser "Reclassification not allowed from state {current_state}"
+
+#### R19.2: Historial de Reclasificaciones
+
+**User Story**
+Como auditor, quiero ver el historial completo de reclasificaciones de una instancia, para verificar cambios de categoría.
+
+**Acceptance Criteria**
+
+1. **WHEN** se consulta el historial mediante GET /api/v1/instances/:id/history
+   **THEN** las transiciones de tipo `reclassify` SHALL aparecer claramente identificadas
+   **AND** cada reclasificación SHALL mostrar:
+   - `from_type` y `to_type` en metadata
+   - `reason` del cambio
+   - Actor que ejecutó
+   - Timestamp
+
+2. **WHEN** se consulta específicamente reclasificaciones mediante GET /api/v1/instances/:id/reclassifications
+   **THEN** el sistema SHALL retornar solo las transiciones de tipo `reclassify`
+   **AND** la respuesta SHALL incluir estadísticas: total de reclasificaciones, tipos únicos
+
+3. **IF** se implementan métricas
+   **THEN** el sistema SHALL exponer:
+   - `reclassifications_total{from_type, to_type}`
+   - Tasa de reclasificación por workflow
+
+---
+
+### R20: Guards de Transición Avanzados
+
+El sistema debe soportar validadores customizados más allá de roles simples, permitiendo implementar lógica de negocio compleja en los permisos de transiciones.
+
+#### R20.1: Guards Personalizados
+
+**User Story**
+Como diseñador de workflows, quiero definir validators customizados más allá de roles simples, para implementar lógica de negocio compleja en permisos de transiciones.
+
+**Acceptance Criteria**
+
+1. **WHEN** se define un evento en el workflow YAML
+   **THEN** el sistema SHALL soportar campo `guards: []` con múltiples validators
+   **AND** cada guard puede ser:
+   - Guard simple por nombre: `has_role:gestionador`
+   - Guard con parámetros: `field_equals:status:active`
+   - Guard personalizado registrado: `can_approve_large_amounts`
+
+2. **WHEN** se ejecuta una transición con guards
+   **THEN** el sistema SHALL evaluar TODOS los guards en el orden definido
+   **AND** TODOS los guards deben pasar (AND lógico) para permitir la transición
+   **AND** el sistema SHALL detener la evaluación en el primer guard que falle (short-circuit)
+
+3. **WHEN** un guard falla
+   **THEN** el sistema SHALL retornar HTTP 403 Forbidden
+   **AND** la respuesta SHALL incluir:
+   ```json
+   {
+     "error": "Guard validation failed",
+     "code": "GUARD_FAILED",
+     "details": {
+       "guard": "is_assigned_to_actor",
+       "message": "Instance is not assigned to the current actor"
+     }
+   }
+   ```
+
+4. **WHEN** se configuran múltiples guards
+   **THEN** el workflow YAML SHALL soportar:
+   ```yaml
+   events:
+     - name: approve_review
+       from: [in_review]
+       to: approved
+       guards:
+         - has_role:revisor
+         - field_not_empty:data.review_notes
+         - instance_age_less_than:72h
+   ```
+
+#### R20.2: Guards Pre-definidos
+
+**User Story**
+Como sistema, quiero proveer un conjunto de guards comunes pre-definidos, para facilitar la configuración de workflows sin código custom.
+
+**Acceptance Criteria**
+
+1. **WHEN** el sistema se inicializa
+   **THEN** el sistema SHALL registrar los siguientes guards pre-definidos:
+
+   **Guards de Roles:**
+   - `has_role:{role}` - Verifica que el actor tenga el rol especificado
+   - `has_any_role:{role1,role2}` - Verifica que el actor tenga al menos uno de los roles
+
+   **Guards de Asignación:**
+   - `is_assigned_to_actor` - Verifica que `current_actor == actor_id`
+   - `is_not_assigned` - Verifica que `current_actor IS NULL`
+
+   **Guards de Campos:**
+   - `field_equals:{path}:{value}` - Verifica `data.path == value`
+   - `field_not_empty:{path}` - Verifica que `data.path` no esté vacío
+   - `field_exists:{path}` - Verifica que `data.path` exista
+   - `field_matches:{path}:{regex}` - Verifica que `data.path` cumpla regex
+
+   **Guards de Tiempo:**
+   - `instance_age_less_than:{duration}` - Verifica `NOW() - created_at < duration`
+   - `instance_age_more_than:{duration}` - Verifica `NOW() - created_at > duration`
+   - `before_time:{HH:MM}` - Verifica que la hora actual sea antes de HH:MM
+   - `after_time:{HH:MM}` - Verifica que la hora actual sea después de HH:MM
+   - `on_weekday` - Verifica que sea día laboral (lun-vie)
+
+   **Guards de Estado:**
+   - `substate_equals:{substate}` - Verifica `current_sub_state == substate`
+   - `parent_state_equals:{state}` - Verifica estado del padre (para subprocesos)
+
+   **Guards de Datos:**
+   - `data_size_less_than:{size_kb}` - Verifica tamaño del JSONB data
+   - `has_attachments` - Verifica que existan attachments (si aplica)
+
+2. **WHEN** se usa un guard pre-definido
+   **THEN** el sistema SHALL parsear el nombre y parámetros
+   **AND** el sistema SHALL ejecutar la validación correspondiente
+   **AND** el sistema SHALL retornar mensaje descriptivo en caso de fallo
+
+3. **IF** se usa un guard no registrado
+   **THEN** el sistema SHALL fallar la validación del workflow durante carga
+   **AND** el error SHALL indicar "Unknown guard: {guard_name}"
+
+#### R20.3: Guards Personalizados con Código
+
+**User Story**
+Como desarrollador, quiero registrar guards personalizados vía código, para implementar lógica de negocio específica del dominio.
+
+**Acceptance Criteria**
+
+1. **WHEN** se implementa un guard personalizado
+   **THEN** el guard SHALL implementar la interface:
+   ```go
+   type Guard interface {
+       Validate(ctx context.Context, instance *Instance, actor *Actor) error
+   }
+   ```
+
+2. **WHEN** se registra un guard personalizado
+   **THEN** el sistema SHALL proveer función de registro:
+   ```go
+   RegisterGuard(name string, guard Guard) error
+   ```
+   **AND** el sistema SHALL validar que el nombre no esté duplicado
+
+3. **WHEN** se usa un guard personalizado en el workflow YAML
+   **THEN** el workflow YAML puede referenciarlo por nombre:
+   ```yaml
+   guards:
+     - can_approve_large_amounts
+     - custom_business_rule_xyz
+   ```
+
+4. **WHEN** un guard personalizado falla
+   **THEN** el error retornado SHALL ser descriptivo
+   **AND** el error SHALL incluir contexto del guard (nombre, instancia, actor)
+
+#### R20.4: Guards con OR Lógico
+
+**User Story**
+Como diseñador de workflows, quiero combinar guards con lógica OR además de AND, para mayor flexibilidad.
+
+**Acceptance Criteria**
+
+1. **WHEN** se requiere lógica OR entre guards
+   **THEN** el workflow YAML SHALL soportar sintaxis:
+   ```yaml
+   guards:
+     - has_role:gestionador
+     - or:
+         - is_assigned_to_actor
+         - has_role:supervisor
+   ```
+   **Significado:** `has_role:gestionador AND (is_assigned_to_actor OR has_role:supervisor)`
+
+2. **WHEN** se evalúa un bloque OR
+   **THEN** el sistema SHALL evaluar todos los guards dentro del bloque
+   **AND** al menos UNO debe pasar para que el bloque OR pase
+   **AND** si TODOS fallan, el bloque OR falla
+
+3. **IF** se anidan múltiples niveles de OR/AND
+   **THEN** el sistema SHALL soportar hasta 3 niveles de anidación
+   **AND** profundidades mayores SHALL retornar error de validación
+
+---
+
+### R21: Plantillas de Workflows
+
+El sistema debe permitir crear, gestionar y reutilizar plantillas de workflows, facilitando la creación rápida de procesos similares.
+
+#### R21.1: Crear Workflow desde Plantilla
+
+**User Story**
+Como administrador, quiero marcar workflows como plantillas reutilizables, para acelerar la creación de procesos similares.
+
+**Acceptance Criteria**
+
+1. **WHEN** se crea un workflow mediante POST /api/v1/workflows
+   **THEN** el request PUEDE incluir campo `is_template: true`
+   **AND** el sistema SHALL marcar el workflow como plantilla
+
+2. **WHEN** se marca un workflow como plantilla
+   **THEN** el sistema SHALL:
+   - Agregar campo `is_template BOOLEAN DEFAULT FALSE` a tabla workflows
+   - Permitir que el workflow sea clonado múltiples veces
+   - NO permitir crear instancias directamente de un template (retornar error)
+
+3. **WHEN** se lista workflows mediante GET /api/v1/workflows
+   **THEN** el sistema SHALL soportar filtro `?is_template=true`
+   **AND** SHALL retornar solo plantillas
+   **AND** el sistema SHALL soportar filtro `?is_template=false` para workflows normales
+
+#### R21.2: Clonar Workflow desde Plantilla
+
+**User Story**
+Como administrador, quiero clonar un workflow desde una plantilla, personalizando ciertos parámetros, para crear workflows derivados rápidamente.
+
+**Acceptance Criteria**
+
+1. **WHEN** se clona una plantilla mediante POST /api/v1/workflows/from-template
+   **THEN** el request SHALL incluir:
+   ```json
+   {
+     "template_id": "template-workflow-id",
+     "new_id": "new-workflow-id",
+     "name": "Nuevo Workflow Personalizado",
+     "description": "Descripción específica",
+     "overrides": {
+       "states.filed.timeout": "48h",
+       "events.assign_document.guards": ["has_role:admin"]
+     }
+   }
+   ```
+
+2. **WHEN** el sistema clona la plantilla
+   **THEN** el sistema SHALL:
+   - Copiar toda la configuración del template
+   - Aplicar los overrides especificados
+   - Generar nuevo UUID si `new_id` no se proporciona
+   - Establecer `is_template = false` en el nuevo workflow
+   - Establecer `template_id` = ID del template origen
+   - Establecer `created_at` = NOW()
+
+3. **WHEN** se aplican overrides
+   **THEN** el sistema SHALL soportar notación dot para rutas:
+   - `states.{state_id}.{property}`
+   - `events.{event_name}.{property}`
+   - `webhooks.0.url`
+
+4. **WHEN** la clonación se completa exitosamente
+   **THEN** el sistema SHALL retornar HTTP 201 Created
+   **AND** la respuesta SHALL incluir el workflow completo clonado
+
+5. **IF** el template_id no existe o no es una plantilla
+   **THEN** el sistema SHALL retornar HTTP 404 Not Found
+
+6. **IF** new_id ya existe
+   **THEN** el sistema SHALL retornar HTTP 409 Conflict
+
+#### R21.3: Gestionar Plantillas
+
+**User Story**
+Como administrador, quiero gestionar plantillas (actualizar, versionar, eliminar), para mantener una biblioteca actualizada.
+
+**Acceptance Criteria**
+
+1. **WHEN** se actualiza una plantilla mediante PUT /api/v1/workflows/:template_id
+   **THEN** el sistema SHALL verificar que `is_template = true`
+   **AND** el sistema SHALL incrementar versión de la plantilla
+   **AND** los workflows derivados existentes NO se actualizan automáticamente
+
+2. **WHEN** se elimina una plantilla mediante DELETE /api/v1/workflows/:template_id
+   **THEN** el sistema SHALL verificar que no haya workflows derivados activos
+   **OR** el sistema SHALL permitir eliminación con query param `?force=true`
+   **AND** el sistema SHALL hacer soft delete (deleted_at)
+
+3. **WHEN** se consulta workflows derivados
+   **THEN** el endpoint GET /api/v1/workflows?template_id={id}
+   **SHALL** retornar todos los workflows creados desde esa plantilla
+
+4. **IF** se implementa versionado de plantillas
+   **THEN** el sistema SHALL mantener versiones históricas de templates
+   **AND** permitir clonar desde versión específica: `?template_version=2`
+
+---
+
+### R22: Import/Export de Workflows
+
+El sistema debe permitir exportar e importar workflows en formato YAML/JSON, facilitando portabilidad entre ambientes y backup de configuraciones.
+
+#### R22.1: Exportar Workflow
+
+**User Story**
+Como administrador, quiero exportar workflows a archivos YAML/JSON, para backup, compartir entre ambientes, o control de versiones.
+
+**Acceptance Criteria**
+
+1. **WHEN** se exporta un workflow mediante GET /api/v1/workflows/:id/export
+   **THEN** el sistema SHALL soportar query parameter `?format=yaml` o `?format=json`
+   **AND** el sistema SHALL generar archivo con configuración completa del workflow
+
+2. **WHEN** se genera el archivo de exportación
+   **THEN** el archivo SHALL incluir:
+   - Versión del esquema de FlowEngine
+   - Metadatos del workflow (id, name, description, version, created_at)
+   - Configuración completa (states, events, webhooks, etc.)
+   - Timestamp de exportación
+   - Checksums para validación de integridad
+
+3. **WHEN** se exporta en formato YAML
+   **THEN** el sistema SHALL generar archivo válido según spec del workflow YAML
+   **AND** el archivo SHALL ser directamente importable
+
+4. **WHEN** se exporta en formato JSON
+   **THEN** el sistema SHALL usar formato JSON:API para consistencia
+   **AND** el sistema SHALL incluir schema validation information
+
+5. **WHEN** se exportan múltiples workflows
+   **THEN** el endpoint POST /api/v1/workflows/export-batch
+   **SHALL** aceptar lista de IDs y generar archivo ZIP con todos los workflows
+
+6. **IF** el workflow tiene referencias a recursos externos (webhooks, etc.)
+   **THEN** la exportación SHALL incluir advertencias sobre configuraciones específicas del ambiente
+
+#### R22.2: Importar Workflow
+
+**User Story**
+Como administrador, quiero importar workflows desde archivos YAML/JSON, para restaurar configuraciones o migrar entre ambientes.
+
+**Acceptance Criteria**
+
+1. **WHEN** se importa un workflow mediante POST /api/v1/workflows/import
+   **THEN** el request SHALL aceptar:
+   - Archivo YAML/JSON como multipart/form-data
+   - O JSON directo en el body
+
+2. **WHEN** se procesa la importación
+   **THEN** el sistema SHALL:
+   - Validar formato del archivo (YAML/JSON válido)
+   - Validar versión del esquema (compatibilidad)
+   - Validar integridad (checksum si está presente)
+   - Validar configuración del workflow (estados, eventos, etc.)
+
+3. **WHEN** la validación pasa
+   **THEN** el sistema SHALL verificar si el workflow ID ya existe:
+   - Si NO existe: crear nuevo workflow
+   - Si existe: retornar HTTP 409 Conflict
+
+4. **WHEN** se usa query param `?mode=update`
+   **THEN** el sistema SHALL actualizar el workflow existente si los IDs coinciden
+   **AND** el sistema SHALL incrementar la versión del workflow
+
+5. **WHEN** se usa query param `?mode=force`
+   **THEN** el sistema SHALL sobrescribir el workflow existente sin importar versión
+   **AND** el sistema SHALL generar advertencia en logs
+
+6. **WHEN** se importa con `?generate_new_id=true`
+   **THEN** el sistema SHALL ignorar el ID del archivo y generar uno nuevo
+   **AND** el sistema SHALL mantener name y otros metadatos
+
+7. **WHEN** la importación se completa exitosamente
+   **THEN** el sistema SHALL retornar HTTP 201 Created (nuevo) o 200 OK (actualizado)
+   **AND** la respuesta SHALL incluir el workflow importado completo
+
+8. **IF** la validación falla
+   **THEN** el sistema SHALL retornar HTTP 400 Bad Request
+   **AND** el mensaje SHALL incluir lista detallada de errores:
+   ```json
+   {
+     "error": "Import validation failed",
+     "details": [
+       {
+         "field": "states.2.timeout",
+         "error": "Invalid duration format"
+       },
+       {
+         "field": "events.3.from",
+         "error": "State 'invalid_state' does not exist"
+       }
+     ]
+   }
+   ```
+
+#### R22.3: Validación de Compatibilidad
+
+**User Story**
+Como sistema, quiero validar compatibilidad de versiones al importar workflows, para prevenir importaciones incompatibles.
+
+**Acceptance Criteria**
+
+1. **WHEN** se detecta versión de esquema en el archivo importado
+   **THEN** el sistema SHALL verificar compatibilidad con versión actual
+   **AND** el sistema SHALL definir matriz de compatibilidad:
+   - `1.0` compatible con `1.x`
+   - `2.0` requiere migración desde `1.x`
+
+2. **WHEN** la versión es incompatible
+   **THEN** el sistema SHALL retornar HTTP 400 Bad Request
+   **AND** el mensaje SHALL indicar versión requerida vs versión del archivo
+   **AND** el sistema PUEDE sugerir endpoint de migración: `/api/v1/workflows/migrate`
+
+3. **IF** no se especifica versión en el archivo
+   **THEN** el sistema SHALL asumir versión más reciente
+   **AND** el sistema SHALL registrar advertencia en logs
+
+#### R22.4: Exportación Bulk y Backup
+
+**User Story**
+Como administrador, quiero exportar todos los workflows del sistema para backup completo.
+
+**Acceptance Criteria**
+
+1. **WHEN** se exporta todo mediante GET /api/v1/workflows/export-all
+   **THEN** el sistema SHALL generar archivo ZIP conteniendo:
+   - Todos los workflows en formato YAML
+   - Archivo manifest.json con lista de workflows y checksums
+   - README con instrucciones de importación
+
+2. **WHEN** se importa un backup completo mediante POST /api/v1/workflows/import-bulk
+   **THEN** el sistema SHALL:
+   - Extraer archivo ZIP
+   - Validar manifest
+   - Importar workflows en orden de dependencias (templates primero)
+   - Generar reporte de importación
+
+3. **IF** algunos workflows fallan en importación bulk
+   **THEN** el sistema SHALL continuar con los demás (no atómico)
+   **AND** el reporte final SHALL listar éxitos y fallos
+
+---
+
+### R23: Metadata Extendida en Transiciones
+
+El sistema debe permitir capturar información adicional en transiciones más allá del data JSONB básico, como reason, feedback, y campos configurables por workflow.
+
+#### R23.1: Campos Adicionales en Transiciones
+
+**User Story**
+Como diseñador de workflows, quiero capturar información adicional en transiciones (reason, feedback, attachments), configurable por tipo de evento.
+
+**Acceptance Criteria**
+
+1. **WHEN** se actualiza el schema de workflow_transitions
+   **THEN** la tabla SHALL incluir campos adicionales:
+   - `reason TEXT` (motivo de la transición)
+   - `feedback TEXT` (retroalimentación o comentarios)
+   - `metadata JSONB` (campos adicionales configurables)
+
+2. **WHEN** se define un evento en workflow YAML
+   **THEN** el sistema SHALL soportar configuración de metadata:
+   ```yaml
+   events:
+     - name: reject
+       from: [in_review]
+       to: in_progress
+       metadata_schema:
+         required:
+           - reason: string
+           - feedback: string
+         optional:
+           - correction_notes: string
+           - priority: enum[low,medium,high]
+   ```
+
+3. **WHEN** se ejecuta una transición con metadata_schema definido
+   **THEN** el sistema SHALL validar que los campos required estén presentes
+   **AND** el sistema SHALL validar tipos de datos según schema
+   **AND** el sistema SHALL retornar HTTP 422 si la validación falla
+
+4. **WHEN** se envía un evento con metadata mediante POST /api/v1/instances/:id/events
+   **THEN** el request PUEDE incluir:
+   ```json
+   {
+     "event": "reject",
+     "actor": "user-123",
+     "reason": "Documentación incompleta",
+     "feedback": "Faltan adjuntos: cédula, comprobante",
+     "metadata": {
+       "correction_notes": "Contactado al solicitante",
+       "priority": "high"
+     }
+   }
+   ```
+
+5. **WHEN** se persiste la transición
+   **THEN** el sistema SHALL almacenar:
+   - `reason` en columna `reason`
+   - `feedback` en columna `feedback`
+   - `metadata` (campos adicionales) en columna `metadata` JSONB
+
+#### R23.2: Validación de Metadata Schema
+
+**User Story**
+Como sistema, quiero validar metadata de transiciones según schemas configurados, para garantizar calidad de datos.
+
+**Acceptance Criteria**
+
+1. **WHEN** se valida metadata según schema
+   **THEN** el sistema SHALL soportar tipos:
+   - `string` (con min_length, max_length, pattern)
+   - `number` (con min, max)
+   - `boolean`
+   - `enum` (lista de valores permitidos)
+   - `array` (con item_type)
+   - `object` (con nested schema)
+
+2. **WHEN** un campo required falta
+   **THEN** el sistema SHALL retornar HTTP 422 Unprocessable Entity
+   **AND** el error SHALL indicar: "Missing required metadata field: {field}"
+
+3. **WHEN** un valor no cumple el tipo
+   **THEN** el sistema SHALL retornar HTTP 422
+   **AND** el error SHALL indicar: "Invalid type for field {field}: expected {expected}, got {actual}"
+
+4. **WHEN** un enum recibe valor inválido
+   **THEN** el sistema SHALL retornar HTTP 422
+   **AND** el error SHALL indicar: "Invalid value for {field}: must be one of {allowed_values}"
+
+#### R23.3: Consultar Transiciones con Metadata
+
+**User Story**
+Como usuario, quiero consultar y filtrar transiciones por su metadata, para análisis y reporting.
+
+**Acceptance Criteria**
+
+1. **WHEN** se consulta el historial mediante GET /api/v1/instances/:id/history
+   **THEN** cada transición SHALL incluir campos de metadata:
+   ```json
+   {
+     "id": "trans-123",
+     "event": "reject",
+     "from_state": "in_review",
+     "to_state": "in_progress",
+     "reason": "Documentación incompleta",
+     "feedback": "Faltan adjuntos",
+     "metadata": {
+       "priority": "high"
+     },
+     "actor": "user-123",
+     "created_at": "2025-11-05T10:00:00Z"
+   }
+   ```
+
+2. **WHEN** se filtra historial por metadata
+   **THEN** el endpoint GET /api/v1/instances/:id/history
+   **SHALL** soportar filtros:
+   - `?event=reject` - solo transiciones de tipo reject
+   - `?has_feedback=true` - solo transiciones con feedback
+   - `?metadata.priority=high` - filtrar por campos de metadata
+
+3. **WHEN** se consultan transiciones globalmente
+   **THEN** el endpoint POST /api/v1/queries/transitions
+   **SHALL** permitir búsqueda avanzada:
+   ```json
+   {
+     "workflow_id": "person_document_flow",
+     "events": ["reject", "escalate"],
+     "from_date": "2025-11-01",
+     "to_date": "2025-11-30",
+     "has_feedback": true,
+     "metadata_filter": {
+       "priority": "high"
+     }
+   }
+   ```
+
+4. **IF** se implementan métricas
+   **THEN** el sistema SHALL exponer:
+   - `transitions_with_reason_total` (transiciones con reason)
+   - `transitions_with_feedback_total` (transiciones con feedback)
+   - Agregaciones por valores de metadata (ej: prioridad)
+
+#### R23.4: Reason y Feedback Obligatorios
+
+**User Story**
+Como diseñador de workflows, quiero hacer reason y feedback obligatorios para ciertos eventos, para garantizar documentación.
+
+**Acceptance Criteria**
+
+1. **WHEN** se configura un evento en workflow YAML
+   **THEN** el sistema SHALL soportar:
+   ```yaml
+   events:
+     - name: reject
+       require_reason: true
+       require_feedback: true
+   ```
+
+2. **WHEN** se ejecuta transición con `require_reason: true`
+   **THEN** el sistema SHALL validar que el campo `reason` esté presente y no vacío
+   **AND** el sistema SHALL retornar HTTP 422 si falta
+
+3. **WHEN** se ejecuta transición con `require_feedback: true`
+   **THEN** el sistema SHALL validar que el campo `feedback` esté presente y no vacío
+   **AND** el sistema SHALL retornar HTTP 422 si falta
+
+4. **IF** reason y feedback son opcionales (default)
+   **THEN** el sistema SHALL aceptar transiciones sin estos campos
+   **AND** los campos quedarán NULL en la base de datos
+
+---
+
 ## Priorización de Requerimientos
 
-### Must Have (P0)
+### Must Have (P0) - Core Functionality
+Estos requerimientos son esenciales para el funcionamiento básico del sistema y deben implementarse en la primera versión.
+
 - R1.1, R1.2: Gestión básica de workflows
 - R2.1, R2.2: Creación y consulta de instancias
 - R3.1, R3.2: Ejecución de transiciones con optimistic locking
+- **R17.1, R17.2, R17.3, R17.4**: **Sistema de Subestados** (crítico - ya usado en person_states)
+- **R18.1, R18.2, R18.3**: **Escalamientos Manuales básicos** (crítico - ya usado en person_states)
+- **R20.1, R20.2**: **Guards básicos y pre-definidos** (crítico para lógica de negocio)
+- **R23.1, R23.2**: **Metadata extendida básica** (reason, feedback - ya usado)
 - R8.1: Publicación de eventos de dominio
 - R10.1: Hybrid repository
 - R11.3: Health check
 - R13.1: Graceful shutdown
 - R16.1, R16.2: Formato JSON:API básico (responses y errores)
 
-### Should Have (P1)
+### Should Have (P1) - Enhanced Features
+Funcionalidades importantes que mejoran significativamente la usabilidad y flexibilidad del sistema.
+
 - R1.3: Actualización de workflows
 - R2.3: Historial de transiciones
 - R4: Ciclo de vida (pausar, reanudar, cancelar)
-- R5: Timers y escalamientos
+- R5: Timers y escalamientos automáticos
 - R7: Actores y roles
 - R8.2: Webhooks
 - R9: Queries avanzadas
@@ -1853,23 +2829,58 @@ Como cliente de la API, quiero recibir metadatos útiles en cada response, para 
 - R15.1, R15.2, R15.3, R15.4: Clonación básica de instancias
 - R16.3, R16.4, R16.5: JSON:API paginación, filtrado y tipos de recursos
 - R16.6, R16.7: JSON:API content negotiation y operaciones de escritura
+- **R18.4**: **Gestión avanzada de escalamientos** (cerrar/cancelar)
+- **R19.1, R19.2**: **Reclasificación de Instancias**
+- **R20.3, R20.4**: **Guards personalizados con código y lógica OR**
+- **R21.1, R21.2**: **Plantillas de Workflows básicas** (crear y clonar)
+- **R23.3, R23.4**: **Consultas y validación avanzada de metadata**
 
-### Could Have (P2)
+### Could Have (P2) - Nice to Have
+Funcionalidades que agregan valor pero no son críticas para el lanzamiento inicial.
+
 - R6: Subprocesos jerárquicos
 - R9.2: Estadísticas y métricas
 - R12: Seguridad avanzada
 - R14: Performance optimizations
 - R15.5, R15.6, R15.7, R15.8: Gestión avanzada de clonación (tiempos, notificaciones, configuración, permisos)
 - R16.8: JSON:API metadatos globales avanzados
+- **R21.3**: **Gestión avanzada de plantillas** (versionado, soft delete)
+- **R22.1, R22.2, R22.3, R22.4**: **Import/Export de Workflows completo**
 
-### Won't Have (v1.0)
-- UI gráfica para diseñar workflows
-- Multi-tenancy
-- Workflow versioning con rollback automático
-- Machine learning para optimización de rutas
+### Won't Have (v1.0) - Future Considerations
+Funcionalidades que no se implementarán en la versión 1.0 pero podrían considerarse para versiones futuras.
+
+- UI gráfica para diseñar workflows (drag-and-drop)
+- Multi-tenancy con aislamiento de datos
+- Workflow versioning con rollback automático de instancias
+- Machine learning para optimización de rutas y predicción de tiempos
+- Gestión de adjuntos integrada (se espera que cada implementación use su propio object storage)
+- Sistema de comentarios/notas integrado (se puede implementar vía webhooks externos)
 
 ---
 
-**Versión**: 1.0
-**Fecha**: 2025-01-15
-**Próxima Revisión**: 2025-02-15
+## Historial de Versiones
+
+### Versión 2.0 (2025-11-05)
+**Cambios Mayores:**
+- **R17**: Agregado sistema de subestados jerárquicos (crítico para person_states)
+- **R18**: Agregado sistema de escalamientos manuales completo
+- **R19**: Agregado sistema de reclasificación de instancias
+- **R20**: Agregado sistema de guards avanzados con lógica compleja
+- **R21**: Agregado sistema de plantillas de workflows
+- **R22**: Agregado sistema de import/export de workflows
+- **R23**: Agregado sistema de metadata extendida en transiciones
+- **R3.1**: Clarificado soporte explícito de reentrada de estados (loops)
+- Actualizada sección de priorización con nuevos requerimientos clasificados por criticidad
+
+**Motivación:** Estos requerimientos reflejan funcionalidades ya implementadas en el sistema de estados de personas (person_states) y son críticos para garantizar que el sistema sea suficientemente genérico para implementar múltiples tipos de flujos de trabajo.
+
+### Versión 1.0 (2025-01-15)
+- Versión inicial con 16 requerimientos funcionales básicos
+- Cobertura de workflows, instancias, persistencia, seguridad y observabilidad
+
+---
+
+**Versión Actual**: 2.0
+**Fecha de Última Actualización**: 2025-11-05
+**Próxima Revisión**: 2025-12-05
