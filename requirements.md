@@ -61,6 +61,18 @@ Mecanismo de notificación HTTP que envía eventos del sistema a URLs externas c
 **Specification Pattern**
 Patrón de diseño usado para encapsular criterios de búsqueda complejos de forma reutilizable y componible.
 
+**Clone (Clonación)**
+Mecanismo que permite distribuir una instancia de workflow entre múltiples usuarios para obtener respuestas o información parcial que será consolidada. Una clonación es implementada como un tipo especial de subproceso con estados simplificados y gestión de tiempos específica.
+
+**Cloned Instance (Instancia Clonada)**
+Subproceso creado a partir de una instancia principal (padre) que permite a un usuario específico trabajar en una parte del proceso y proporcionar una respuesta que será consolidada. Tiene estados simplificados: pending, accepted, responded, rejected.
+
+**Consolidator (Consolidador)**
+Actor designado responsable de recibir y consolidar todas las respuestas de las instancias clonadas para continuar con el proceso principal. Puede ser el mismo actor que inició la clonación o uno diferente.
+
+**Clone Time Restriction (Restricción de Tiempo de Clonación)**
+Regla de negocio que limita el tiempo asignado a las clonaciones para asegurar que el proceso principal tenga margen suficiente para consolidación y cierre.
+
 ---
 
 ## Requirements
@@ -897,6 +909,472 @@ Como sistema escalable, quiero soportar más de 10,000 transiciones por segundo 
 
 ---
 
+### R15: Clonación de Instancias
+
+La clonación es una característica configurable que permite distribuir una instancia de workflow entre múltiples usuarios para obtener respuestas parciales que serán consolidadas. Esta funcionalidad reutiliza el sistema de subprocesos (R6) con lógica y validaciones específicas.
+
+#### R15.1: Crear Clonación de Instancia
+
+**User Story**
+Como gestor autorizado, quiero clonar una instancia de workflow a múltiples usuarios de diferentes oficinas, para obtener información o respuestas parciales que consolidaré posteriormente.
+
+**Acceptance Criteria**
+
+1. **WHEN** el gestor inicia una clonación mediante POST /api/v1/instances/:id/clone
+   **THEN** el sistema SHALL validar que la instancia padre exista
+   **AND** el sistema SHALL validar que el estado actual permita clonación (según configuración del workflow)
+   **AND** el sistema SHALL validar que el actor tenga rol autorizado para clonar (configurable)
+   **AND** el sistema SHALL validar que status = "running"
+
+2. **WHEN** se envía el request de clonación
+   **THEN** el request SHALL incluir:
+   - `assignees`: array de objetos con `{user_id, office_id}` (mínimo 2 usuarios)
+   - `consolidator_id`: ID del usuario que consolidará las respuestas
+   - `reason`: motivo de la clonación (texto descriptivo)
+   - `timeout_duration`: duración máxima para las clonaciones (ej: "24h", "3d")
+   - `metadata`: datos opcionales adicionales
+
+3. **WHEN** se valida el timeout_duration
+   **THEN** el sistema SHALL calcular el tiempo restante del trámite principal
+   **AND** el sistema SHALL validar que timeout_duration <= (tiempo_restante * 0.80)
+   **AND** el sistema SHALL retornar HTTP 422 Unprocessable Entity si excede el límite
+   **AND** el mensaje SHALL incluir advertencia: "Clone timeout cannot exceed 80% of remaining time ({calculated_max})"
+
+4. **WHEN** se validan los assignees
+   **THEN** el sistema SHALL validar que todos los user_id existan
+   **AND** el sistema SHALL validar que office_id sea válido para cada usuario
+   **AND** el sistema SHALL validar que la cantidad de assignees >= 2
+   **AND** el sistema SHALL retornar HTTP 400 Bad Request si hay usuarios duplicados
+
+5. **WHEN** todas las validaciones pasan
+   **THEN** el sistema SHALL crear una instancia clonada (subproceso) por cada assignee
+   **AND** cada instancia clonada SHALL incluir:
+   - `parent_id`: ID de la instancia principal
+   - `clone_type`: "cloned_instance"
+   - `assigned_user_id`: ID del usuario asignado
+   - `consolidator_id`: ID del consolidador
+   - `current_state`: "pending"
+   - `expires_at`: calculated como NOW() + timeout_duration
+   - `data`: copia de datos relevantes del padre (read-write access)
+
+6. **WHEN** se crean las instancias clonadas
+   **THEN** el sistema SHALL cambiar el estado del trámite principal según configuración del workflow
+   **AND** el sistema SHALL crear un registro de clonación con:
+   - `clone_group_id`: UUID único para el grupo de clones
+   - `parent_instance_id`: ID de la instancia principal
+   - `consolidator_id`: ID del consolidador
+   - `reason`: motivo de la clonación
+   - `total_clones`: número total de clones creados
+   - `status`: "active"
+   - `created_at`, `expires_at`
+
+7. **WHEN** la clonación se crea exitosamente
+   **THEN** el sistema SHALL generar eventos de dominio:
+   - "CloneGroupCreated" (con clone_group_id, parent_id, total_clones)
+   - "ClonedInstanceCreated" por cada instancia clonada
+   **AND** el sistema SHALL agregar registro al historial del trámite principal
+   **AND** el sistema SHALL retornar HTTP 201 Created
+   **AND** la respuesta SHALL incluir: clone_group_id, cloned_instances array, expires_at
+
+8. **IF** el workflow no tiene clonación habilitada en su configuración
+   **THEN** el sistema SHALL retornar HTTP 403 Forbidden
+   **AND** el mensaje SHALL ser "Cloning is not enabled for this workflow"
+
+9. **IF** el estado actual no permite clonación
+   **THEN** el sistema SHALL retornar HTTP 409 Conflict
+   **AND** el mensaje SHALL ser "Cloning is not allowed from state {current_state}"
+
+#### R15.2: Aceptar o Rechazar Clonación
+
+**User Story**
+Como usuario asignado a una clonación, quiero aceptar o rechazar la solicitud, para tener control sobre mi carga de trabajo.
+
+**Acceptance Criteria**
+
+1. **WHEN** el usuario asignado consulta una clonación mediante GET /api/v1/clones/:id
+   **THEN** el sistema SHALL retornar los detalles de la instancia clonada
+   **AND** la respuesta SHALL incluir:
+   - Información general del trámite principal (vista limitada según configuración)
+   - `reason`: motivo de la clonación
+   - `expires_at`: fecha límite para responder
+   - `current_state`: estado actual (pending, accepted, responded, rejected)
+   - `consolidator`: información del consolidador
+   - `parent_summary`: resumen configurable del trámite padre
+
+2. **WHEN** el usuario acepta la clonación mediante POST /api/v1/clones/:id/accept
+   **THEN** el sistema SHALL validar que current_state = "pending"
+   **AND** el sistema SHALL validar que el actor sea el usuario asignado
+   **AND** el sistema SHALL cambiar current_state a "accepted"
+   **AND** el sistema SHALL registrar accepted_at = NOW()
+
+3. **WHEN** la clonación es aceptada
+   **THEN** el sistema SHALL generar evento "ClonedInstanceAccepted"
+   **AND** el sistema SHALL agregar registro al historial del trámite principal
+   **AND** el sistema SHALL notificar al consolidador (según configuración de notificaciones)
+   **AND** el sistema SHALL retornar HTTP 200 OK
+
+4. **WHEN** el usuario rechaza la clonación mediante POST /api/v1/clones/:id/reject
+   **THEN** el sistema SHALL validar que current_state = "pending"
+   **AND** el sistema SHALL validar que el actor sea el usuario asignado
+   **AND** el sistema SHALL cambiar current_state a "rejected"
+   **AND** el sistema SHALL registrar rejected_at = NOW()
+   **AND** el request SHALL incluir `rejection_reason` (opcional)
+
+5. **WHEN** la clonación es rechazada
+   **THEN** el sistema SHALL generar evento "ClonedInstanceRejected"
+   **AND** el sistema SHALL agregar registro al historial del trámite principal
+   **AND** el sistema SHALL notificar al gestor principal y al consolidador
+   **AND** el evento SHALL incluir rejection_reason
+   **AND** el sistema SHALL retornar HTTP 200 OK
+
+6. **IF** el usuario intenta aceptar/rechazar una clonación que no le pertenece
+   **THEN** el sistema SHALL retornar HTTP 403 Forbidden
+   **AND** el mensaje SHALL ser "You are not assigned to this clone"
+
+7. **IF** la clonación ya fue procesada (no está en estado pending)
+   **THEN** el sistema SHALL retornar HTTP 409 Conflict
+   **AND** el mensaje SHALL ser "Clone already {current_state}"
+
+8. **IF** la clonación ha expirado (expires_at < NOW())
+   **THEN** el sistema SHALL permitir el rechazo
+   **AND** el sistema SHALL NOT permitir la aceptación
+   **AND** el sistema SHALL retornar HTTP 410 Gone si se intenta aceptar
+
+#### R15.3: Responder Clonación
+
+**User Story**
+Como usuario que aceptó una clonación, quiero diligenciar y enviar mi respuesta, para contribuir al proceso de consolidación.
+
+**Acceptance Criteria**
+
+1. **WHEN** el usuario envía su respuesta mediante POST /api/v1/clones/:id/respond
+   **THEN** el sistema SHALL validar que current_state = "accepted"
+   **AND** el sistema SHALL validar que el actor sea el usuario asignado
+   **AND** el sistema SHALL validar que NOW() <= expires_at
+   **AND** el request SHALL incluir `response_data` (JSONB con la respuesta)
+
+2. **WHEN** se valida response_data
+   **THEN** el sistema SHALL validar que contenga los campos requeridos según configuración del workflow
+   **AND** el sistema SHALL retornar HTTP 422 Unprocessable Entity si faltan campos obligatorios
+
+3. **WHEN** la respuesta es válida
+   **THEN** el sistema SHALL cambiar current_state a "responded"
+   **AND** el sistema SHALL almacenar response_data en la instancia clonada
+   **AND** el sistema SHALL registrar responded_at = NOW()
+   **AND** el sistema SHALL establecer status = "completed"
+
+4. **WHEN** la respuesta se registra exitosamente
+   **THEN** el sistema SHALL generar evento "ClonedInstanceResponded"
+   **AND** el sistema SHALL agregar registro al historial del trámite principal
+   **AND** el sistema SHALL notificar al consolidador
+   **AND** el evento SHALL incluir un resumen de la respuesta
+   **AND** el sistema SHALL retornar HTTP 200 OK
+
+5. **IF** el usuario actualiza su respuesta antes de la consolidación
+   **THEN** el sistema SHALL permitir POST /api/v1/clones/:id/respond nuevamente
+   **AND** el sistema SHALL actualizar response_data
+   **AND** el sistema SHALL registrar updated_at
+   **AND** el sistema SHALL generar evento "ClonedInstanceResponseUpdated"
+
+6. **IF** la clonación ha expirado
+   **THEN** el sistema SHALL retornar HTTP 410 Gone
+   **AND** el mensaje SHALL ser "Clone has expired, cannot submit response"
+
+7. **WHEN** el usuario consulta el historial de su clonación mediante GET /api/v1/clones/:id/history
+   **THEN** el sistema SHALL retornar todas las transiciones de la instancia clonada
+   **AND** el sistema SHALL incluir acciones: accepted, responded, updated
+   **AND** el sistema SHALL NOT incluir el historial completo del trámite principal
+
+#### R15.4: Consolidar Respuestas
+
+**User Story**
+Como consolidador designado, quiero recibir y consolidar todas las respuestas de las clonaciones, para continuar con el proceso principal.
+
+**Acceptance Criteria**
+
+1. **WHEN** el consolidador consulta las clonaciones mediante GET /api/v1/instances/:id/clones
+   **THEN** el sistema SHALL validar que el actor sea el consolidador asignado
+   **AND** el sistema SHALL retornar todas las instancias clonadas del grupo
+   **AND** cada clonación SHALL incluir: id, assigned_user, current_state, response_data, responded_at, expires_at
+
+2. **WHEN** se retorna la lista de clonaciones
+   **THEN** la respuesta SHALL incluir un resumen:
+   - `total_clones`: total de clones creados
+   - `accepted_count`: clones aceptados
+   - `responded_count`: clones con respuesta
+   - `rejected_count`: clones rechazados
+   - `pending_count`: clones sin respuesta
+   - `all_responded`: boolean indicando si todos respondieron
+
+3. **WHEN** el consolidador consulta el detalle de una clonación específica
+   **THEN** el sistema SHALL validar que la clonación pertenezca al grupo del trámite principal
+   **AND** el sistema SHALL retornar todos los detalles incluyendo response_data completo
+
+4. **WHEN** el consolidador marca la consolidación como completa mediante POST /api/v1/instances/:id/clones/consolidate
+   **THEN** el sistema SHALL validar que el actor sea el consolidador asignado
+   **AND** el sistema SHALL validar que el estado del trámite principal permita consolidación
+   **AND** el request SHALL incluir `consolidated_data` (JSONB con datos consolidados)
+   **AND** el request PUEDE incluir `notes` (opcional)
+
+5. **WHEN** se ejecuta la consolidación
+   **THEN** el sistema SHALL actualizar el trámite principal con consolidated_data
+   **AND** el sistema SHALL cambiar el estado del trámite principal según configuración del workflow
+   **AND** el sistema SHALL marcar el clone_group como status = "consolidated"
+   **AND** el sistema SHALL registrar consolidated_at = NOW()
+
+6. **WHEN** la consolidación se completa exitosamente
+   **THEN** el sistema SHALL generar evento "CloneGroupConsolidated"
+   **AND** el sistema SHALL agregar registro detallado al historial del trámite principal
+   **AND** el evento SHALL incluir resumen de respuestas (total, aceptadas, rechazadas)
+   **AND** el sistema SHALL retornar HTTP 200 OK
+   **AND** la respuesta SHALL incluir el nuevo estado del trámite principal
+
+7. **IF** el consolidador rechaza clonaciones específicas mediante POST /api/v1/clones/:id/consolidator-reject
+   **THEN** el sistema SHALL validar que el actor sea el consolidador
+   **AND** el request SHALL incluir `rejection_reason`
+   **AND** el sistema SHALL marcar la clonación como "rejected_by_consolidator"
+   **AND** el sistema SHALL generar evento "ClonedInstanceRejectedByConsolidator"
+   **AND** el sistema SHALL notificar al usuario asignado
+
+8. **IF** el consolidador intenta consolidar sin tener respuestas suficientes
+   **THEN** el sistema SHALL emitir advertencia pero permitir la consolidación
+   **AND** el sistema SHALL registrar en el historial qué clonaciones no respondieron
+
+9. **IF** otro usuario (no consolidador) intenta acceder a funciones de consolidación
+   **THEN** el sistema SHALL retornar HTTP 403 Forbidden
+   **AND** el mensaje SHALL ser "Only the designated consolidator can perform this action"
+
+#### R15.5: Gestión de Tiempos en Clonación
+
+**User Story**
+Como sistema, quiero gestionar automáticamente los tiempos de las clonaciones y sus notificaciones, para asegurar cumplimiento de SLAs.
+
+**Acceptance Criteria**
+
+1. **WHEN** se crea un grupo de clonaciones
+   **THEN** el sistema SHALL crear un timer en la tabla workflow_timers
+   **AND** el timer SHALL incluir: clone_group_id, event_on_timeout="clone_expired", expires_at
+
+2. **WHEN** el timer scheduler detecta clonaciones próximas a vencer (24h antes)
+   **THEN** el sistema SHALL generar evento "CloneExpirationWarning"
+   **AND** el sistema SHALL notificar a usuarios asignados que no han respondido
+   **AND** el sistema SHALL notificar al consolidador con el estado actual
+
+3. **WHEN** una clonación expira (expires_at <= NOW() y current_state != "responded")
+   **THEN** el sistema SHALL generar evento "ClonedInstanceExpired"
+   **AND** el sistema SHALL notificar al consolidador
+   **AND** el sistema SHALL marcar la clonación como "expired"
+   **AND** el sistema SHALL agregar registro al historial del trámite principal
+
+4. **WHEN** el consolidador o gestor solicita extensión de tiempo mediante POST /api/v1/clones/groups/:group_id/extend
+   **THEN** el sistema SHALL validar que el actor sea consolidador o gestor principal
+   **AND** el request SHALL incluir `additional_duration` (ej: "12h", "2d")
+   **AND** el request SHALL incluir `extension_reason`
+
+5. **WHEN** se valida la extensión
+   **THEN** el sistema SHALL calcular nuevo expires_at = current_expires_at + additional_duration
+   **AND** el sistema SHALL validar que nuevo_expires_at <= (tiempo_vencimiento_tramite_principal * 0.80)
+   **AND** el sistema SHALL retornar HTTP 422 si excede el límite máximo
+
+6. **WHEN** la extensión es aprobada
+   **THEN** el sistema SHALL actualizar expires_at en todas las clonaciones del grupo con state != "responded"
+   **AND** el sistema SHALL generar evento "CloneGroupExtended"
+   **AND** el sistema SHALL notificar a todos los usuarios asignados pendientes
+   **AND** el sistema SHALL agregar registro al historial del trámite principal
+   **AND** el sistema SHALL retornar HTTP 200 OK
+
+7. **IF** todas las clonaciones han respondido antes del vencimiento
+   **THEN** el sistema SHALL cancelar el timer automáticamente
+   **AND** el sistema SHALL generar evento "CloneGroupCompletedEarly"
+
+8. **WHEN** el timer scheduler procesa grupos de clones expirados
+   **THEN** el procesamiento SHALL ser independiente de otros timers de workflow
+   **AND** un error en un grupo de clones SHALL NOT afectar otros grupos
+
+#### R15.6: Notificaciones y Trazabilidad
+
+**User Story**
+Como participante del proceso de clonación, quiero recibir notificaciones oportunas y ver trazabilidad completa, para mantenerme informado del progreso.
+
+**Acceptance Criteria**
+
+1. **WHEN** ocurre cualquier evento de clonación
+   **THEN** el sistema SHALL registrar la acción en el historial del trámite principal
+   **AND** cada registro SHALL incluir: timestamp, actor, action_type, clone_id (si aplica), details
+
+2. **WHEN** se consulta el historial del trámite principal mediante GET /api/v1/instances/:id/history
+   **THEN** el sistema SHALL incluir todas las acciones de clonación:
+   - "clone_group_created"
+   - "cloned_instance_created"
+   - "cloned_instance_accepted"
+   - "cloned_instance_rejected"
+   - "cloned_instance_responded"
+   - "clone_group_consolidated"
+   - "clone_group_extended"
+   - "cloned_instance_expired"
+
+3. **WHEN** se genera un evento de clonación
+   **THEN** el evento SHALL incluir metadatos completos:
+   - `parent_instance_id`
+   - `clone_group_id`
+   - `cloned_instance_id` (si aplica)
+   - `actor_id`
+   - `summary`: resumen legible de la acción
+
+4. **IF** se configuran webhooks para eventos de clonación
+   **THEN** el sistema SHALL enviar notificaciones HTTP según R8.2
+   **AND** los eventos de clonación SHALL ser filtrables en la configuración de webhooks
+
+5. **WHEN** se configura el workflow para usar notificaciones
+   **THEN** el sistema SHALL enviar notificaciones en estos escenarios:
+   - Usuario asignado recibe nueva clonación (state: pending)
+   - Consolidador recibe notificación de aceptación/rechazo
+   - Consolidador recibe notificación de nueva respuesta
+   - Gestor principal recibe notificación de rechazo
+   - Todos los participantes reciben advertencia de expiración
+   - Usuarios asignados reciben notificación de extensión de tiempo
+
+6. **IF** se habilita audit trail detallado en configuración
+   **THEN** el sistema SHALL registrar todos los accesos a datos del trámite principal por usuarios clonados
+   **AND** el sistema SHALL registrar todas las modificaciones a response_data
+
+7. **WHEN** el consolidador genera el reporte final mediante GET /api/v1/instances/:id/clones/report
+   **THEN** el sistema SHALL generar un reporte consolidado incluyendo:
+   - Resumen del grupo de clones (total, aceptados, rechazados, respondidos)
+   - Timeline de eventos
+   - Todas las respuestas agregadas
+   - Métricas de tiempo (tiempo promedio de respuesta, extensiones, etc.)
+   - Lista de usuarios que no respondieron
+
+#### R15.7: Configuración de Clonación en Workflow
+
+**User Story**
+Como diseñador de workflows, quiero configurar el comportamiento de clonación en el archivo YAML del workflow, para habilitar/deshabilitar y personalizar esta funcionalidad.
+
+**Acceptance Criteria**
+
+1. **WHEN** se define un workflow con clonación habilitada
+   **THEN** el archivo YAML SHALL incluir sección `cloning_config`:
+
+```yaml
+cloning_config:
+  enabled: true
+  allowed_states: ["assigned", "in_progress"]  # Estados desde los cuales se puede clonar
+  allowed_roles: ["manager", "assigner"]  # Roles que pueden iniciar clonación
+  consolidation_state: "cloned_awaiting_consolidation"  # Estado del padre mientras espera consolidación
+  post_consolidation_allowed_events: ["approve", "request_changes"]  # Eventos permitidos después de consolidar
+
+  # Configuración de tiempos
+  time_restrictions:
+    max_percentage: 80  # Máximo 80% del tiempo restante del trámite principal
+    warning_before_expiration: "24h"  # Advertir 24h antes del vencimiento
+    allow_extensions: true
+    max_extensions: 2  # Máximo 2 extensiones permitidas
+
+  # Configuración de instancias clonadas
+  cloned_instance_workflow:
+    states:
+      - id: "pending"
+        type: "initial"
+      - id: "accepted"
+        type: "normal"
+      - id: "responded"
+        type: "final"
+      - id: "rejected"
+        type: "final"
+      - id: "expired"
+        type: "final"
+
+  # Campos requeridos en las respuestas
+  required_response_fields:
+    - field: "response_text"
+      type: "string"
+      validation: "min_length:10"
+    - field: "attachments"
+      type: "array"
+      validation: "optional"
+
+  # Configuración de visibilidad
+  parent_data_visibility:
+    mode: "limited"  # "full" | "limited" | "custom"
+    allowed_fields: ["case_number", "subject", "filed_date", "current_state"]
+
+  # Notificaciones
+  notifications:
+    on_clone_created: true
+    on_acceptance: true
+    on_rejection: true
+    on_response: true
+    on_expiration_warning: true
+    on_expired: true
+    on_consolidated: true
+```
+
+2. **WHEN** se valida la configuración del workflow
+   **THEN** el sistema SHALL verificar que:
+   - `allowed_states` contenga estados existentes en el workflow
+   - `consolidation_state` exista en el workflow
+   - `max_percentage` esté entre 1 y 100
+   - `cloned_instance_workflow.states` incluya al menos los estados básicos
+
+3. **IF** `enabled = false` en cloning_config
+   **THEN** todos los endpoints de clonación SHALL retornar HTTP 403 Forbidden para ese workflow
+
+4. **IF** no se especifica cloning_config en el workflow
+   **THEN** el sistema SHALL asumir que la clonación está deshabilitada por defecto
+
+5. **WHEN** se actualiza un workflow con nueva configuración de clonación
+   **THEN** los cambios SHALL aplicarse solo a nuevas clonaciones
+   **AND** las clonaciones activas SHALL continuar usando la configuración original
+
+#### R15.8: Permisos y Control de Acceso en Clonación
+
+**User Story**
+Como sistema, quiero validar permisos específicos para operaciones de clonación, para garantizar seguridad y control de acceso apropiado.
+
+**Acceptance Criteria**
+
+1. **WHEN** un actor intenta crear una clonación
+   **THEN** el sistema SHALL validar que el actor tenga uno de los roles en `allowed_roles` del workflow
+   **AND** el sistema SHALL validar que el estado actual esté en `allowed_states`
+   **AND** el sistema SHALL validar que el actor sea el current_actor del trámite o tenga permisos de override
+
+2. **WHEN** un usuario asignado accede a una instancia clonada
+   **THEN** el sistema SHALL validar que user_id = assigned_user_id
+   **AND** el sistema SHALL aplicar restricciones de visibilidad según `parent_data_visibility`
+
+3. **WHEN** se aplica visibilidad limitada (mode: "limited")
+   **THEN** el sistema SHALL retornar solo los campos especificados en `allowed_fields`
+   **AND** el sistema SHALL ocultar datos sensibles del trámite principal
+   **AND** el sistema SHALL NOT permitir modificación de datos del padre (solo lectura)
+
+4. **WHEN** el consolidador accede a las clonaciones
+   **THEN** el sistema SHALL validar que actor_id = consolidator_id
+   **AND** el sistema SHALL permitir acceso completo a todas las clonaciones del grupo
+   **AND** el sistema SHALL permitir acceso completo a datos del trámite principal
+
+5. **IF** el gestor principal o consolidador puede reasignar una clonación rechazada
+   **THEN** el endpoint POST /api/v1/clones/:id/reassign SHALL estar disponible
+   **AND** el request SHALL incluir `new_assignee_id` y `reassignment_reason`
+   **AND** el sistema SHALL crear una nueva instancia clonada con el nuevo usuario
+   **AND** el sistema SHALL marcar la anterior como "reassigned"
+   **AND** el sistema SHALL generar evento "ClonedInstanceReassigned"
+
+6. **WHEN** se consultan métricas de clonación mediante GET /api/v1/queries/cloning-statistics
+   **THEN** el sistema SHALL retornar estadísticas agregadas:
+   - Total de grupos de clones por workflow
+   - Tasa de aceptación promedio
+   - Tasa de respuesta promedio
+   - Tiempo promedio de respuesta
+   - Número de extensiones otorgadas
+   - Clonaciones expiradas vs completadas
+
+7. **IF** se configura audit_trail = true para el workflow
+   **THEN** todas las acciones de usuarios clonados SHALL registrarse en tabla de auditoría
+   **AND** el registro SHALL incluir: user_id, action, timestamp, ip_address, accessed_data
+
+---
+
 ## Priorización de Requerimientos
 
 ### Must Have (P0)
@@ -917,12 +1395,14 @@ Como sistema escalable, quiero soportar más de 10,000 transiciones por segundo 
 - R8.2: Webhooks
 - R9: Queries avanzadas
 - R11.1, R11.2: Observabilidad completa
+- R15.1, R15.2, R15.3, R15.4: Clonación básica de instancias
 
 ### Could Have (P2)
 - R6: Subprocesos jerárquicos
 - R9.2: Estadísticas y métricas
 - R12: Seguridad avanzada
 - R14: Performance optimizations
+- R15.5, R15.6, R15.7, R15.8: Gestión avanzada de clonación (tiempos, notificaciones, configuración, permisos)
 
 ### Won't Have (v1.0)
 - UI gráfica para diseñar workflows
