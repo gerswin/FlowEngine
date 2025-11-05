@@ -1375,6 +1375,460 @@ Como sistema, quiero validar permisos específicos para operaciones de clonació
 
 ---
 
+### R16: Formato de API - JSON:API Specification
+
+El sistema debe adoptar la especificación JSON:API (https://jsonapi.org/) para todos los responses de la API REST, proporcionando consistencia, estandarización y mejor manejo de relaciones complejas.
+
+#### R16.1: Estructura de Responses
+
+**User Story**
+Como cliente de la API, quiero recibir responses en formato JSON:API estándar, para tener consistencia y poder usar librerías cliente existentes.
+
+**Acceptance Criteria**
+
+1. **WHEN** la API retorna un recurso individual exitosamente
+   **THEN** el response SHALL seguir la estructura JSON:API:
+   ```json
+   {
+     "data": {
+       "type": "instance",
+       "id": "550e8400-e29b-41d4-a716-446655440000",
+       "attributes": {
+         "workflow_id": "radicacion",
+         "current_state": "gestionar",
+         "previous_state": "asignar",
+         "status": "running",
+         "version": 2,
+         "created_at": "2025-01-15T10:00:00Z",
+         "updated_at": "2025-01-15T10:05:00Z"
+       },
+       "relationships": {
+         "workflow": {
+           "data": { "type": "workflow", "id": "radicacion" },
+           "links": {
+             "self": "/api/v1/instances/550e8400-.../relationships/workflow",
+             "related": "/api/v1/workflows/radicacion"
+           }
+         },
+         "parent": {
+           "data": null
+         },
+         "subprocesses": {
+           "data": [],
+           "meta": { "count": 0 }
+         },
+         "clones": {
+           "data": [
+             { "type": "clone", "id": "abc-123-..." }
+           ],
+           "meta": { "count": 1 }
+         }
+       },
+       "links": {
+         "self": "/api/v1/instances/550e8400-..."
+       }
+     },
+     "meta": {
+       "request_id": "req-xyz-789",
+       "timestamp": "2025-01-15T10:05:30Z"
+     }
+   }
+   ```
+
+2. **WHEN** la API retorna una colección de recursos
+   **THEN** el response SHALL usar array en `data`:
+   ```json
+   {
+     "data": [
+       {
+         "type": "instance",
+         "id": "...",
+         "attributes": { ... }
+       },
+       {
+         "type": "instance",
+         "id": "...",
+         "attributes": { ... }
+       }
+     ],
+     "meta": {
+       "total": 95,
+       "page": {
+         "number": 1,
+         "size": 10,
+         "total_pages": 10
+       }
+     },
+     "links": {
+       "self": "/api/v1/instances?page[number]=1&page[size]=10",
+       "first": "/api/v1/instances?page[number]=1&page[size]=10",
+       "prev": null,
+       "next": "/api/v1/instances?page[number]=2&page[size]=10",
+       "last": "/api/v1/instances?page[number]=10&page[size]=10"
+     }
+   }
+   ```
+
+3. **WHEN** se incluyen recursos relacionados
+   **THEN** el sistema SHALL usar el top-level member `included`:
+   ```json
+   {
+     "data": {
+       "type": "instance",
+       "id": "550e8400-...",
+       "attributes": { ... },
+       "relationships": {
+         "workflow": {
+           "data": { "type": "workflow", "id": "radicacion" }
+         }
+       }
+     },
+     "included": [
+       {
+         "type": "workflow",
+         "id": "radicacion",
+         "attributes": {
+           "name": "Flujo de Radicación",
+           "description": "Proceso completo de radicación",
+           "version": "1.0"
+         }
+       }
+     ]
+   }
+   ```
+
+4. **WHEN** el cliente especifica `include` query parameter
+   **THEN** el sistema SHALL incluir los recursos relacionados especificados
+   **AND** ejemplos válidos: `?include=workflow`, `?include=workflow,clones`, `?include=clones.responses`
+
+5. **WHEN** el cliente especifica `fields` query parameter (sparse fieldsets)
+   **THEN** el sistema SHALL retornar solo los campos solicitados
+   **AND** ejemplo: `?fields[instance]=current_state,status,version`
+
+#### R16.2: Estructura de Errores
+
+**User Story**
+Como cliente de la API, quiero recibir errores en formato JSON:API consistente, para manejar errores de forma uniforme.
+
+**Acceptance Criteria**
+
+1. **WHEN** ocurre un error en la API
+   **THEN** el response SHALL usar el top-level member `errors` (array):
+   ```json
+   {
+     "errors": [
+       {
+         "id": "err-xyz-123",
+         "status": "409",
+         "code": "VERSION_CONFLICT",
+         "title": "Optimistic Lock Conflict",
+         "detail": "Instance was modified by another process. Please retry with the latest version.",
+         "source": {
+           "pointer": "/data/attributes/version"
+         },
+         "meta": {
+           "expected_version": 2,
+           "current_version": 3
+         }
+       }
+     ],
+     "meta": {
+       "request_id": "req-xyz-789",
+       "timestamp": "2025-01-15T10:05:30Z"
+     }
+   }
+   ```
+
+2. **WHEN** ocurren múltiples errores de validación
+   **THEN** el sistema SHALL retornar todos los errores en el array:
+   ```json
+   {
+     "errors": [
+       {
+         "status": "400",
+         "code": "VALIDATION_ERROR",
+         "title": "Invalid Input",
+         "detail": "workflow_id is required",
+         "source": { "pointer": "/data/attributes/workflow_id" }
+       },
+       {
+         "status": "400",
+         "code": "VALIDATION_ERROR",
+         "title": "Invalid Input",
+         "detail": "actor_id must be a valid UUID",
+         "source": { "pointer": "/data/attributes/actor_id" }
+       }
+     ]
+   }
+   ```
+
+3. **WHEN** se mapean errores de dominio a HTTP status codes
+   **THEN** el sistema SHALL usar los siguientes códigos estándar:
+   - `400` Bad Request: Validación de input fallida
+   - `401` Unauthorized: Token JWT inválido o faltante
+   - `403` Forbidden: Permisos insuficientes, rol no autorizado
+   - `404` Not Found: Recurso no existe
+   - `409` Conflict: Version conflict, invalid transition, instance locked
+   - `410` Gone: Recurso expirado (clonaciones)
+   - `422` Unprocessable Entity: Validación de negocio fallida
+   - `429` Too Many Requests: Rate limit excedido
+   - `500` Internal Server Error: Error inesperado del sistema
+   - `503` Service Unavailable: Dependencia (DB, Redis) no disponible
+
+4. **WHEN** se retorna un error
+   **THEN** cada error object SHALL incluir:
+   - `status`: HTTP status code como string
+   - `code`: Código de error específico del sistema (ej: "VERSION_CONFLICT", "INVALID_TRANSITION")
+   - `title`: Resumen legible del error
+   - `detail`: Descripción detallada específica de esta ocurrencia
+   - `source` (opcional): Ubicación del error (pointer para JSON, parameter para query params)
+   - `meta` (opcional): Metadatos adicionales del error
+
+#### R16.3: Paginación
+
+**User Story**
+Como cliente de la API, quiero paginar resultados usando el estándar JSON:API, para manejar grandes volúmenes de datos eficientemente.
+
+**Acceptance Criteria**
+
+1. **WHEN** el cliente solicita una colección paginada
+   **THEN** el sistema SHALL soportar query parameters:
+   - `page[number]`: Número de página (base 1)
+   - `page[size]`: Tamaño de página (default: 20, max: 100)
+   - Ejemplo: `/api/v1/instances?page[number]=2&page[size]=50`
+
+2. **WHEN** se retorna una colección paginada
+   **THEN** el response SHALL incluir:
+   ```json
+   {
+     "data": [ ... ],
+     "meta": {
+       "total": 250,
+       "page": {
+         "number": 2,
+         "size": 50,
+         "total_pages": 5
+       }
+     },
+     "links": {
+       "self": "/api/v1/instances?page[number]=2&page[size]=50",
+       "first": "/api/v1/instances?page[number]=1&page[size]=50",
+       "prev": "/api/v1/instances?page[number]=1&page[size]=50",
+       "next": "/api/v1/instances?page[number]=3&page[size]=50",
+       "last": "/api/v1/instances?page[number]=5&page[size]=50"
+     }
+   }
+   ```
+
+3. **IF** no hay página siguiente
+   **THEN** `links.next` SHALL ser `null`
+
+4. **IF** no hay página anterior
+   **THEN** `links.prev` SHALL ser `null`
+
+5. **WHEN** se especifica `page[size]` > 100
+   **THEN** el sistema SHALL usar `page[size] = 100` (máximo)
+   **AND** el sistema SHALL incluir advertencia en `meta.warnings`
+
+#### R16.4: Filtrado y Sorting
+
+**User Story**
+Como cliente de la API, quiero filtrar y ordenar colecciones usando el estándar JSON:API, para obtener exactamente los datos que necesito.
+
+**Acceptance Criteria**
+
+1. **WHEN** el cliente aplica filtros
+   **THEN** el sistema SHALL soportar sintaxis `filter[campo]=valor`:
+   - `/api/v1/instances?filter[workflow_id]=radicacion`
+   - `/api/v1/instances?filter[status]=running`
+   - `/api/v1/instances?filter[current_state]=gestionar,revisar` (OR)
+
+2. **WHEN** el cliente ordena resultados
+   **THEN** el sistema SHALL soportar `sort` parameter:
+   - `/api/v1/instances?sort=created_at` (ascendente)
+   - `/api/v1/instances?sort=-created_at` (descendente con -)
+   - `/api/v1/instances?sort=-created_at,status` (múltiples campos)
+
+3. **WHEN** se combinan filtros, sorting y paginación
+   **THEN** todos los parameters SHALL funcionar juntos:
+   ```
+   /api/v1/instances?filter[workflow_id]=radicacion&filter[status]=running&sort=-created_at&page[number]=1&page[size]=20
+   ```
+
+4. **IF** se especifica un campo de ordenamiento inválido
+   **THEN** el sistema SHALL retornar error 400 con detalle del campo inválido
+
+#### R16.5: Tipos de Recursos
+
+**User Story**
+Como desarrollador de la API, quiero definir tipos de recursos consistentes, para mantener coherencia en toda la API.
+
+**Acceptance Criteria**
+
+1. **WHEN** se implementan recursos en la API
+   **THEN** el sistema SHALL usar los siguientes tipos de recursos:
+   - `workflow`: Definiciones de workflows
+   - `instance`: Instancias de workflows
+   - `transition`: Registros de transiciones en el historial
+   - `clone`: Instancias clonadas
+   - `clone-group`: Grupo de clonaciones
+   - `actor`: Actores del sistema
+   - `webhook`: Configuraciones de webhooks
+   - `timer`: Timers activos
+
+2. **WHEN** se retorna un recurso
+   **THEN** el campo `type` SHALL ser singular y en kebab-case
+   **AND** el campo `type` SHALL ser consistente en toda la API
+
+3. **WHEN** se define un relationship
+   **THEN** el nombre del relationship SHALL ser singular o plural según corresponda:
+   - Singular: `workflow`, `parent`, `consolidator`
+   - Plural: `subprocesses`, `clones`, `transitions`
+
+#### R16.6: Content Negotiation
+
+**User Story**
+Como cliente de la API, quiero usar headers estándar JSON:API, para asegurar compatibilidad con librerías cliente.
+
+**Acceptance Criteria**
+
+1. **WHEN** el cliente envía un request con body
+   **THEN** el cliente SHALL incluir header `Content-Type: application/vnd.api+json`
+   **AND** el sistema SHALL retornar error 415 Unsupported Media Type si el Content-Type es incorrecto
+
+2. **WHEN** el servidor retorna un response
+   **THEN** el servidor SHALL incluir header `Content-Type: application/vnd.api+json`
+
+3. **WHEN** el cliente envía header `Accept: application/vnd.api+json`
+   **THEN** el servidor SHALL retornar responses en formato JSON:API
+
+4. **IF** el cliente envía `Accept` con media type parameters no soportados
+   **THEN** el servidor SHALL retornar error 406 Not Acceptable
+
+#### R16.7: Operaciones de Escritura (POST, PATCH, DELETE)
+
+**User Story**
+Como cliente de la API, quiero enviar operaciones de escritura en formato JSON:API, para mantener consistencia en requests y responses.
+
+**Acceptance Criteria**
+
+1. **WHEN** se crea un recurso mediante POST
+   **THEN** el request body SHALL seguir formato JSON:API:
+   ```json
+   {
+     "data": {
+       "type": "instance",
+       "attributes": {
+         "workflow_id": "radicacion",
+         "actor_id": "user123",
+         "actor_role": "radicador",
+         "data": {
+           "tipo": "PQRD",
+           "remitente": "Juan Pérez"
+         }
+       }
+     }
+   }
+   ```
+   **AND** el sistema SHALL retornar HTTP 201 Created
+   **AND** el response SHALL incluir el recurso creado con su `id` asignado
+
+2. **WHEN** se actualiza un recurso mediante PATCH
+   **THEN** el request body SHALL incluir solo los campos a actualizar:
+   ```json
+   {
+     "data": {
+       "type": "instance",
+       "id": "550e8400-...",
+       "attributes": {
+         "status": "paused"
+       }
+     }
+   }
+   ```
+   **AND** el sistema SHALL retornar HTTP 200 OK con el recurso actualizado
+
+3. **WHEN** se ejecuta una acción (no CRUD estándar) como trigger evento
+   **THEN** el endpoint SHALL seguir convención JSON:API para actions:
+   ```
+   POST /api/v1/instances/550e8400-.../events
+   {
+     "data": {
+       "type": "event-trigger",
+       "attributes": {
+         "event": "generar_radicado",
+         "actor": "user123",
+         "data": { ... }
+       }
+     }
+   }
+   ```
+
+4. **WHEN** se elimina un recurso mediante DELETE
+   **THEN** el sistema SHALL retornar HTTP 204 No Content sin body
+   **OR** HTTP 200 OK con meta information sobre la eliminación
+
+#### R16.8: Metadatos Globales
+
+**User Story**
+Como cliente de la API, quiero recibir metadatos útiles en cada response, para debugging y tracking de requests.
+
+**Acceptance Criteria**
+
+1. **WHEN** la API retorna cualquier response exitoso
+   **THEN** el response SHALL incluir `meta` con:
+   ```json
+   {
+     "data": { ... },
+     "meta": {
+       "request_id": "req-abc-123-xyz",
+       "timestamp": "2025-01-15T10:05:30.123Z",
+       "api_version": "1.0",
+       "performance": {
+         "db_queries": 3,
+         "cache_hits": 2,
+         "duration_ms": 45
+       }
+     }
+   }
+   ```
+
+2. **IF** el request tiene warnings (no errores)
+   **THEN** el sistema SHALL incluir `meta.warnings`:
+   ```json
+   {
+     "data": { ... },
+     "meta": {
+       "warnings": [
+         {
+           "code": "PAGE_SIZE_CAPPED",
+           "message": "Requested page size 150 exceeds maximum 100, capped to 100"
+         }
+       ]
+     }
+   }
+   ```
+
+3. **IF** se incluyen estadísticas o agregaciones
+   **THEN** el sistema SHALL usar `meta` para datos no representados como recursos:
+   ```json
+   {
+     "data": [ ... ],
+     "meta": {
+       "statistics": {
+         "total_instances": 1250,
+         "by_status": {
+           "running": 800,
+           "completed": 400,
+           "paused": 50
+         }
+       }
+     }
+   }
+   ```
+
+---
+
 ## Priorización de Requerimientos
 
 ### Must Have (P0)
@@ -1385,6 +1839,7 @@ Como sistema, quiero validar permisos específicos para operaciones de clonació
 - R10.1: Hybrid repository
 - R11.3: Health check
 - R13.1: Graceful shutdown
+- R16.1, R16.2: Formato JSON:API básico (responses y errores)
 
 ### Should Have (P1)
 - R1.3: Actualización de workflows
@@ -1396,6 +1851,8 @@ Como sistema, quiero validar permisos específicos para operaciones de clonació
 - R9: Queries avanzadas
 - R11.1, R11.2: Observabilidad completa
 - R15.1, R15.2, R15.3, R15.4: Clonación básica de instancias
+- R16.3, R16.4, R16.5: JSON:API paginación, filtrado y tipos de recursos
+- R16.6, R16.7: JSON:API content negotiation y operaciones de escritura
 
 ### Could Have (P2)
 - R6: Subprocesos jerárquicos
@@ -1403,6 +1860,7 @@ Como sistema, quiero validar permisos específicos para operaciones de clonació
 - R12: Seguridad avanzada
 - R14: Performance optimizations
 - R15.5, R15.6, R15.7, R15.8: Gestión avanzada de clonación (tiempos, notificaciones, configuración, permisos)
+- R16.8: JSON:API metadatos globales avanzados
 
 ### Won't Have (v1.0)
 - UI gráfica para diseñar workflows
