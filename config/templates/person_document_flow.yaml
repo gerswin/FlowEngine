@@ -1,0 +1,612 @@
+version: "1.0"
+
+workflow:
+  id: "person_document_flow"
+  name: "Flujo de Radicación de Documentos (Personas)"
+  description: |
+    Sistema completo de estados para documentos/solicitudes con soporte de:
+    - Estados jerárquicos con subestados
+    - Escalamiento a departamentos
+    - Reclasificación de documentos
+    - Rechazo con reentrada
+    - Guards basados en roles
+    - Auditoría completa
+
+  initial_state: "filed"
+
+  # ============================================================================
+  # ESTADOS
+  # ============================================================================
+  states:
+    # Estado 1: Filed (Radicación)
+    - id: filed
+      name: Radicación
+      description: Estado inicial cuando se recibe un documento para radicar
+      timeout: 24h
+      on_timeout: escalate_timeout
+      allowed_roles:
+        - radicador
+      metadata:
+        color: "#3498db"
+        icon: "file-alt"
+        priority: "high"
+
+    # Estado 2: Assigned (Asignado)
+    - id: assigned
+      name: Asignado
+      description: Documento asignado a un gestor o grupo de gestión
+      timeout: 12h
+      on_timeout: escalate_timeout
+      allowed_roles:
+        - radicador
+        - asignador
+      metadata:
+        color: "#9b59b6"
+        icon: "user-check"
+        priority: "high"
+
+    # Estado 3: InProgress (En Gestión) - CON SUBESTADOS
+    - id: in_progress
+      name: En Gestión
+      description: Documento siendo gestionado activamente
+      timeout: 48h
+      on_timeout: escalate_timeout
+      allowed_roles:
+        - gestionador
+      # Subestados soportados
+      substates:
+        - id: working
+          name: Trabajando
+          description: Gestión normal del documento
+          default: true
+        - id: escalated_awaiting_response
+          name: Escalado (Esperando Respuesta)
+          description: Documento escalado a otro departamento, esperando respuesta
+        - id: escalation_responded
+          name: Escalado (Respuesta Recibida)
+          description: Se recibió respuesta del escalamiento
+      metadata:
+        color: "#f39c12"
+        icon: "tasks"
+        priority: "medium"
+
+    # Estado 4: InReview (En Revisión)
+    - id: in_review
+      name: En Revisión
+      description: Documento en proceso de revisión de calidad
+      timeout: 12h
+      on_timeout: escalate_timeout
+      allowed_roles:
+        - revisor
+      metadata:
+        color: "#e67e22"
+        icon: "search"
+        priority: "high"
+
+    # Estado 5: Approved (Aprobado)
+    - id: approved
+      name: Aprobado
+      description: Documento aprobado, listo para envío
+      timeout: 12h
+      on_timeout: escalate_timeout
+      allowed_roles:
+        - aprobador
+      metadata:
+        color: "#27ae60"
+        icon: "check-circle"
+        priority: "high"
+
+    # Estado 6: Sent (Enviado) - FINAL
+    - id: sent
+      name: Enviado
+      description: Documento enviado y proceso completado
+      final: true
+      allowed_roles: []
+      metadata:
+        color: "#2ecc71"
+        icon: "paper-plane"
+        priority: "none"
+
+  # ============================================================================
+  # EVENTOS (TRANSICIONES)
+  # ============================================================================
+  events:
+    # ------------------------------------------------------------------------
+    # TRANSICIONES NORMALES
+    # ------------------------------------------------------------------------
+
+    # Evento inicial: Radicar documento
+    - name: file_document
+      description: Radicar un nuevo documento en el sistema
+      from: []  # Transición inicial
+      to: filed
+      guards: []
+      actions:
+        - type: generate_document_id
+          params:
+            prefix: "RAD"
+            format: "RAD-{year}-{seq:06d}"
+        - type: set_metadata
+          params:
+            field: filed_at
+            value: "{{now}}"
+        - type: emit_event
+          params:
+            event_type: document.filed
+
+    # Filed → Assigned
+    - name: assign_document
+      description: Asignar documento a un gestor o grupo
+      from:
+        - filed
+      to: assigned
+      guards:
+        - type: has_role
+          params:
+            role: radicador
+        - type: validate_assignment
+          params:
+            required_fields:
+              - assigned_to
+              - assigned_type  # "user" o "group"
+      actions:
+        - type: assign_to_user
+          params:
+            user_field: "{{data.assigned_to}}"
+            assignment_type: "{{data.assigned_type}}"
+        - type: notify
+          params:
+            recipients: "{{data.assigned_to}}"
+            template: "document_assigned"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: document.assigned
+
+    # Assigned → InProgress
+    - name: start_work
+      description: Iniciar gestión del documento
+      from:
+        - assigned
+      to: in_progress
+      target_substate: working  # Inicia en substate "working"
+      guards:
+        - type: has_role
+          params:
+            role: gestionador
+        - type: is_assigned_to_actor
+          params:
+            check_group: true
+      actions:
+        - type: set_substate
+          params:
+            substate: working
+        - type: set_metadata
+          params:
+            field: work_started_at
+            value: "{{now}}"
+        - type: emit_event
+          params:
+            event_type: document.work_started
+
+    # InProgress → InReview
+    - name: submit_for_review
+      description: Enviar documento a revisión de calidad
+      from:
+        - in_progress
+      to: in_review
+      guards:
+        - type: has_role
+          params:
+            role: gestionador
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - document_content
+              - justification
+              - attachments
+        - type: custom
+          params:
+            validator: validate_document_completeness
+      actions:
+        - type: notify
+          params:
+            recipients:
+              - role: revisor
+            template: "document_ready_for_review"
+            channels:
+              - email
+              - in_app
+        - type: set_metadata
+          params:
+            field: submitted_for_review_at
+            value: "{{now}}"
+        - type: emit_event
+          params:
+            event_type: document.submitted_for_review
+
+    # InReview → Approved
+    - name: approve_review
+      description: Aprobar documento tras revisión
+      from:
+        - in_review
+      to: approved
+      guards:
+        - type: has_role
+          params:
+            role: revisor
+      actions:
+        - type: mark_as_approved
+          params:
+            approved_by: "{{actor.id}}"
+            approved_at: "{{now}}"
+        - type: notify
+          params:
+            recipients:
+              - role: aprobador
+            template: "document_approved_ready_to_send"
+            channels:
+              - email
+        - type: emit_event
+          params:
+            event_type: document.approved
+
+    # Approved → Sent
+    - name: send_document
+      description: Enviar documento al destinatario
+      from:
+        - approved
+      to: sent
+      guards:
+        - type: has_role
+          params:
+            role: aprobador
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - recipient_email
+              - recipient_name
+      actions:
+        - type: send_to_recipient
+          params:
+            recipient: "{{data.recipient_email}}"
+            subject: "Respuesta a su solicitud {{data.document_id}}"
+            template: "document_response"
+        - type: mark_as_completed
+          params:
+            completed_at: "{{now}}"
+            sent_by: "{{actor.id}}"
+        - type: emit_event
+          params:
+            event_type: document.sent
+        - type: emit_event
+          params:
+            event_type: instance.completed
+
+    # ------------------------------------------------------------------------
+    # TRANSICIONES ESPECIALES
+    # ------------------------------------------------------------------------
+
+    # ESCALAMIENTO: InProgress → InProgress (cambio de substate)
+    - name: escalate
+      description: Escalar documento a otro departamento para consulta
+      from:
+        - in_progress
+      to: in_progress  # Permanece en mismo estado
+      from_substate:
+        - working
+        - escalation_responded
+      to_substate: escalated_awaiting_response
+      guards:
+        - type: has_role
+          params:
+            role: gestionador
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - escalation_department_id
+              - escalation_reason
+      actions:
+        - type: create_escalation
+          params:
+            department_id: "{{data.escalation_department_id}}"
+            reason: "{{data.escalation_reason}}"
+            escalated_by: "{{actor.id}}"
+            escalated_at: "{{now}}"
+        - type: set_substate
+          params:
+            substate: escalated_awaiting_response
+        - type: notify
+          params:
+            recipients:
+              - department: "{{data.escalation_department_id}}"
+            template: "escalation_request"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: document.escalated
+
+    # RESPUESTA DE ESCALAMIENTO
+    - name: escalation_reply
+      description: Registrar respuesta de un escalamiento
+      from:
+        - in_progress
+      to: in_progress
+      from_substate:
+        - escalated_awaiting_response
+      to_substate: escalation_responded
+      guards:
+        - type: has_role
+          params:
+            role: gestionador
+        - type: validate_escalation_exists
+          params:
+            status: pending
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - escalation_id
+              - escalation_response
+      actions:
+        - type: record_escalation_response
+          params:
+            escalation_id: "{{data.escalation_id}}"
+            response: "{{data.escalation_response}}"
+            responded_by: "{{actor.id}}"
+            responded_at: "{{now}}"
+        - type: set_substate
+          params:
+            substate: escalation_responded
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.current_actor}}"
+            template: "escalation_responded"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: escalation.responded
+
+    # RECHAZO: InReview → InProgress (REENTRADA PERMITIDA)
+    - name: reject
+      description: Rechazar documento y devolver a gestión para correcciones
+      from:
+        - in_review
+      to: in_progress  # Reentrada al estado previo
+      target_substate: working
+      guards:
+        - type: has_role
+          params:
+            role: revisor
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - rejection_reason
+              - feedback
+      actions:
+        - type: set_substate
+          params:
+            substate: working
+        - type: add_feedback_to_instance
+          params:
+            feedback: "{{data.feedback}}"
+            reason: "{{data.rejection_reason}}"
+            rejected_by: "{{actor.id}}"
+            rejected_at: "{{now}}"
+        - type: increment_rejection_count
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.current_actor}}"
+              - role: gestionador
+            template: "document_rejected"
+            channels:
+              - email
+              - in_app
+            priority: high
+        - type: emit_event
+          params:
+            event_type: document.rejected
+
+    # RECLASIFICACIÓN A PQRD
+    - name: reclassify_to_pqrd
+      description: Reclasificar documento como PQRD
+      from:
+        - in_progress
+      to: in_progress  # Permanece en mismo estado
+      guards:
+        - type: has_role
+          params:
+            role: gestionador
+        - type: can_reclassify
+          params:
+            target_type: PQRD
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - reclassification_reason
+      actions:
+        - type: update_document_type
+          params:
+            new_type: PQRD
+            old_type: "{{data.current_type}}"
+            reason: "{{data.reclassification_reason}}"
+            reclassified_by: "{{actor.id}}"
+            reclassified_at: "{{now}}"
+        - type: log_reclassification
+          params:
+            from_type: "{{data.current_type}}"
+            to_type: PQRD
+        - type: emit_event
+          params:
+            event_type: document.reclassified
+        - type: notify
+          params:
+            recipients:
+              - role: supervisor
+            template: "document_reclassified"
+
+    # RECLASIFICACIÓN A CONTROL
+    - name: reclassify_to_control
+      description: Reclasificar documento como Control
+      from:
+        - in_progress
+      to: in_progress
+      guards:
+        - type: has_role
+          params:
+            role: gestionador
+        - type: can_reclassify
+          params:
+            target_type: Control
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - reclassification_reason
+      actions:
+        - type: update_document_type
+          params:
+            new_type: Control
+            old_type: "{{data.current_type}}"
+            reason: "{{data.reclassification_reason}}"
+            reclassified_by: "{{actor.id}}"
+            reclassified_at: "{{now}}"
+        - type: log_reclassification
+          params:
+            from_type: "{{data.current_type}}"
+            to_type: Control
+        - type: emit_event
+          params:
+            event_type: document.reclassified
+        - type: notify
+          params:
+            recipients:
+              - role: supervisor
+            template: "document_reclassified"
+
+    # TIMEOUT: Escalamiento automático
+    - name: escalate_timeout
+      description: Escalamiento automático por timeout
+      from:
+        - filed
+        - assigned
+        - in_progress
+        - in_review
+        - approved
+      to: in_progress
+      target_substate: escalated_awaiting_response
+      guards: []
+      actions:
+        - type: create_escalation
+          params:
+            department_id: supervision
+            reason: "Timeout: El documento excedió el tiempo límite en estado {{instance.current_state}}"
+            escalated_by: system
+            escalated_at: "{{now}}"
+            auto_escalation: true
+        - type: set_substate
+          params:
+            substate: escalated_awaiting_response
+        - type: notify
+          params:
+            recipients:
+              - role: supervisor
+              - "{{instance.current_actor}}"
+            template: "timeout_escalation"
+            channels:
+              - email
+              - in_app
+              - sms
+            priority: urgent
+        - type: emit_event
+          params:
+            event_type: document.timeout_escalated
+
+  # ============================================================================
+  # WEBHOOKS
+  # ============================================================================
+  webhooks:
+    - url: "${WEBHOOK_URL}/state-changes"
+      events:
+        - state.changed
+        - document.filed
+        - document.assigned
+        - document.sent
+      secret: "${WEBHOOK_SECRET}"
+      headers:
+        X-Service: "FlowEngine"
+        X-Workflow: "person_document_flow"
+      retry_config:
+        max_retries: 3
+        backoff_multiplier: 2
+        initial_interval: 1s
+      active: true
+
+    - url: "${WEBHOOK_URL}/escalations"
+      events:
+        - document.escalated
+        - escalation.responded
+        - document.timeout_escalated
+      secret: "${WEBHOOK_SECRET}"
+      headers:
+        X-Service: "FlowEngine"
+        X-Event-Category: "escalation"
+      retry_config:
+        max_retries: 5
+        backoff_multiplier: 2
+        initial_interval: 2s
+      active: true
+
+    - url: "${WEBHOOK_URL}/quality-events"
+      events:
+        - document.rejected
+        - document.approved
+      secret: "${WEBHOOK_SECRET}"
+      headers:
+        X-Service: "FlowEngine"
+        X-Event-Category: "quality"
+      active: true
+
+  # ============================================================================
+  # SLA Y PERFORMANCE
+  # ============================================================================
+  sla:
+    overall_target: 120h  # 5 días totales
+    state_targets:
+      filed: 24h
+      assigned: 12h
+      in_progress: 48h
+      in_review: 12h
+      approved: 12h
+    escalation_triggers:
+      - state: "*"
+        threshold: "90%"  # 90% del timeout
+        action: notify_supervisor
+      - state: "*"
+        threshold: "100%"
+        action: auto_escalate
+
+  # ============================================================================
+  # METADATA
+  # ============================================================================
+  metadata:
+    version: "1.0.0"
+    author: "FlowEngine Team"
+    created_at: "2025-11-05"
+    tags:
+      - radicacion
+      - documentos
+      - pqrd
+      - personas
+    category: "document_management"
+    department: "atencion_al_ciudadano"
+    compliance:
+      - ISO9001
+      - GDPR
+      - ley_transparencia
