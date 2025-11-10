@@ -195,7 +195,7 @@ func (we *WorkflowEmulator) createWorkflow() {
 	}
 
 	// Track events
-	we.dispatcher.Dispatch(nil, wf.DomainEvents()...)
+	we.dispatcher.DispatchBatch(nil, wf.DomainEvents())
 
 	// Add more states
 	fmt.Println("\n  Add additional states (enter empty ID to finish):")
