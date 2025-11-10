@@ -3,6 +3,7 @@ package workflow
 import (
 	"testing"
 
+	"github.com/LaFabric-LinkTIC/FlowEngine/internal/domain/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -10,7 +11,7 @@ import (
 func TestNewWorkflow_Success(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
 
-	workflow, err := NewWorkflow("Approval Workflow", initialState)
+	workflow, err := NewWorkflow("Approval Workflow", initialState, shared.NewID())
 
 	require.NoError(t, err)
 	assert.NotNil(t, workflow)
@@ -25,7 +26,7 @@ func TestNewWorkflow_Success(t *testing.T) {
 func TestNewWorkflow_EmptyName(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
 
-	workflow, err := NewWorkflow("", initialState)
+	workflow, err := NewWorkflow("", initialState, shared.NewID())
 
 	assert.Error(t, err)
 	assert.Nil(t, workflow)
@@ -34,7 +35,7 @@ func TestNewWorkflow_EmptyName(t *testing.T) {
 func TestNewWorkflow_InvalidInitialState(t *testing.T) {
 	invalidState := State{} // Zero value state
 
-	workflow, err := NewWorkflow("Test Workflow", invalidState)
+	workflow, err := NewWorkflow("Test Workflow", invalidState, shared.NewID())
 
 	assert.Error(t, err)
 	assert.Nil(t, workflow)
@@ -42,7 +43,7 @@ func TestNewWorkflow_InvalidInitialState(t *testing.T) {
 
 func TestWorkflow_AddState_Success(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", initialState)
+	workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 	newState, _ := NewState("approved", "Approved")
 	err := workflow.AddState(newState)
@@ -56,7 +57,7 @@ func TestWorkflow_AddState_Success(t *testing.T) {
 
 func TestWorkflow_AddState_Duplicate_Error(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", initialState)
+	workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 	duplicateState, _ := NewState("draft", "Draft Again")
 	err := workflow.AddState(duplicateState)
@@ -67,7 +68,7 @@ func TestWorkflow_AddState_Duplicate_Error(t *testing.T) {
 
 func TestWorkflow_AddState_Invalid(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", initialState)
+	workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 	invalidState := State{} // Zero value
 	err := workflow.AddState(invalidState)
@@ -77,7 +78,7 @@ func TestWorkflow_AddState_Invalid(t *testing.T) {
 
 func TestWorkflow_GetState_Success(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", initialState)
+	workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 	state, err := workflow.GetState("draft")
 
@@ -88,7 +89,7 @@ func TestWorkflow_GetState_Success(t *testing.T) {
 
 func TestWorkflow_GetState_NotFound(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", initialState)
+	workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 	state, err := workflow.GetState("nonexistent")
 
@@ -99,7 +100,7 @@ func TestWorkflow_GetState_NotFound(t *testing.T) {
 
 func TestWorkflow_AddEvent_ValidStates_Success(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", initialState)
+	workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 	approvedState, _ := NewState("approved", "Approved")
 	workflow.AddState(approvedState)
@@ -116,7 +117,7 @@ func TestWorkflow_AddEvent_ValidStates_Success(t *testing.T) {
 
 func TestWorkflow_AddEvent_InvalidState_Error(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", initialState)
+	workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 	nonExistentState, _ := NewState("approved", "Approved")
 	event, _ := NewEvent("approve", []State{initialState}, nonExistentState)
@@ -129,7 +130,7 @@ func TestWorkflow_AddEvent_InvalidState_Error(t *testing.T) {
 
 func TestWorkflow_AddEvent_Duplicate_Error(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", initialState)
+	workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 	approvedState, _ := NewState("approved", "Approved")
 	workflow.AddState(approvedState)
@@ -146,7 +147,7 @@ func TestWorkflow_AddEvent_Duplicate_Error(t *testing.T) {
 
 func TestWorkflow_CanTransition_ValidEvent_ReturnsTrue(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", initialState)
+	workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 	approvedState, _ := NewState("approved", "Approved")
 	workflow.AddState(approvedState)
@@ -161,7 +162,7 @@ func TestWorkflow_CanTransition_ValidEvent_ReturnsTrue(t *testing.T) {
 
 func TestWorkflow_CanTransition_InvalidEvent_ReturnsFalse(t *testing.T) {
 	draftState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", draftState)
+	workflow, _ := NewWorkflow("Test Workflow", draftState, shared.NewID())
 
 	approvedState, _ := NewState("approved", "Approved")
 	workflow.AddState(approvedState)
@@ -180,7 +181,7 @@ func TestWorkflow_CanTransition_InvalidEvent_ReturnsFalse(t *testing.T) {
 
 func TestWorkflow_CanTransition_NonExistentState_ReturnsFalse(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", initialState)
+	workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 	nonExistentState, _ := NewState("nonexistent", "Non-Existent")
 	approvedState, _ := NewState("approved", "Approved")
@@ -194,7 +195,7 @@ func TestWorkflow_CanTransition_NonExistentState_ReturnsFalse(t *testing.T) {
 
 func TestWorkflow_ValidateTransition_Success(t *testing.T) {
 	draftState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", draftState)
+	workflow, _ := NewWorkflow("Test Workflow", draftState, shared.NewID())
 
 	approvedState, _ := NewState("approved", "Approved")
 	workflow.AddState(approvedState)
@@ -209,7 +210,7 @@ func TestWorkflow_ValidateTransition_Success(t *testing.T) {
 
 func TestWorkflow_ValidateTransition_InvalidEvent(t *testing.T) {
 	draftState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", draftState)
+	workflow, _ := NewWorkflow("Test Workflow", draftState, shared.NewID())
 
 	err := workflow.ValidateTransition(draftState, "nonexistent_event")
 
@@ -219,7 +220,7 @@ func TestWorkflow_ValidateTransition_InvalidEvent(t *testing.T) {
 
 func TestWorkflow_ValidateTransition_InvalidTransition(t *testing.T) {
 	draftState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", draftState)
+	workflow, _ := NewWorkflow("Test Workflow", draftState, shared.NewID())
 
 	approvedState, _ := NewState("approved", "Approved")
 	workflow.AddState(approvedState)
@@ -235,7 +236,7 @@ func TestWorkflow_ValidateTransition_InvalidTransition(t *testing.T) {
 
 func TestWorkflow_IncrementVersion(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", initialState)
+	workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 	t.Run("increment major", func(t *testing.T) {
 		err := workflow.IncrementVersion("major")
@@ -264,7 +265,7 @@ func TestWorkflow_IncrementVersion(t *testing.T) {
 func TestWorkflow_Validate(t *testing.T) {
 	t.Run("valid workflow", func(t *testing.T) {
 		initialState, _ := NewState("draft", "Draft")
-		workflow, _ := NewWorkflow("Test Workflow", initialState)
+		workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 		approvedState, _ := NewState("approved", "Approved")
 		workflow.AddState(approvedState)
@@ -278,7 +279,7 @@ func TestWorkflow_Validate(t *testing.T) {
 
 	t.Run("event with non-existent state", func(t *testing.T) {
 		initialState, _ := NewState("draft", "Draft")
-		workflow, _ := NewWorkflow("Test Workflow", initialState)
+		workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 		// This scenario is hard to create due to validation in AddEvent
 		// but tests defensive validation
@@ -289,7 +290,7 @@ func TestWorkflow_Validate(t *testing.T) {
 
 func TestWorkflow_Clone(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Original Workflow", initialState)
+	workflow, _ := NewWorkflow("Original Workflow", initialState, shared.NewID())
 
 	approvedState, _ := NewState("approved", "Approved")
 	workflow.AddState(approvedState)
@@ -318,7 +319,7 @@ func TestWorkflow_Clone(t *testing.T) {
 
 func TestWorkflow_SetDescription(t *testing.T) {
 	initialState, _ := NewState("draft", "Draft")
-	workflow, _ := NewWorkflow("Test Workflow", initialState)
+	workflow, _ := NewWorkflow("Test Workflow", initialState, shared.NewID())
 
 	workflow.SetDescription("A test workflow description")
 

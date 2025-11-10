@@ -195,7 +195,7 @@ func TestInstance_PauseAndResume(t *testing.T) {
 	actor := shared.NewID()
 
 	// Pause
-	err := instance.Pause(actor)
+	err := instance.Pause(actor, "maintenance window")
 	require.NoError(t, err)
 	assert.Equal(t, StatusPaused, instance.Status())
 	assert.True(t, instance.IsActive())
@@ -213,7 +213,7 @@ func TestInstance_Pause_InvalidWhenNotRunning(t *testing.T) {
 
 	instance.Complete(actor)
 
-	err := instance.Pause(actor)
+	err := instance.Pause(actor, "test reason")
 	assert.Error(t, err)
 }
 

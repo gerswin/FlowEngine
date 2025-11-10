@@ -3,6 +3,7 @@ package instance
 import (
 	"fmt"
 
+	"github.com/LaFabric-LinkTIC/FlowEngine/internal/domain/event"
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/domain/shared"
 )
 
@@ -19,6 +20,7 @@ type Instance struct {
 	data           Data
 	variables      Variables
 	transitions    []*Transition
+	domainEvents   []event.DomainEvent // Domain events to be published
 	createdAt      shared.Timestamp
 	updatedAt      shared.Timestamp
 	completedAt    shared.Timestamp
@@ -55,10 +57,21 @@ func NewInstance(workflowID shared.ID, workflowName, initialState string, starte
 		data:          NewData(),
 		variables:     NewVariables(),
 		transitions:   []*Transition{},
+		domainEvents:  []event.DomainEvent{},
 		createdAt:     now,
 		updatedAt:     now,
 		startedBy:     startedBy,
 	}
+
+	// Record instance created event
+	instance.recordEvent(event.NewInstanceCreated(
+		instance.id,
+		workflowID,
+		workflowName,
+		initialState,
+		startedBy,
+		instance.data.ToMap(),
+	))
 
 	return instance, nil
 }
@@ -150,6 +163,21 @@ func (i *Instance) StartedBy() shared.ID {
 	return i.startedBy
 }
 
+// DomainEvents returns all domain events and clears the internal event list.
+// This follows the pattern where the aggregate generates events, and the
+// application layer is responsible for dispatching them after persistence.
+func (i *Instance) DomainEvents() []event.DomainEvent {
+	events := make([]event.DomainEvent, len(i.domainEvents))
+	copy(events, i.domainEvents)
+	i.domainEvents = []event.DomainEvent{} // Clear events after returning
+	return events
+}
+
+// recordEvent adds a domain event to the instance's event list.
+func (i *Instance) recordEvent(evt event.DomainEvent) {
+	i.domainEvents = append(i.domainEvents, evt)
+}
+
 // IsActive returns true if the instance is in an active state.
 func (i *Instance) IsActive() bool {
 	return i.status.IsActive()
@@ -194,22 +222,22 @@ func (i *Instance) UpdateVariable(key string, value interface{}) {
 }
 
 // Transition performs a state transition with the given event.
-func (i *Instance) Transition(toState, event string, actor shared.ID, metadata TransitionMetadata) error {
-	return i.TransitionWithSubState(toState, ZeroSubState(), event, actor, metadata)
+func (i *Instance) Transition(toState, eventName string, actor shared.ID, metadata TransitionMetadata) error {
+	return i.TransitionWithSubState(toState, ZeroSubState(), eventName, actor, metadata)
 }
 
 // TransitionWithSubState performs a state transition with sub-state support (R17, R23).
-func (i *Instance) TransitionWithSubState(toState string, toSubState SubState, event string, actor shared.ID, metadata TransitionMetadata) error {
+func (i *Instance) TransitionWithSubState(toState string, toSubState SubState, eventName string, actor shared.ID, metadata TransitionMetadata) error {
 	// Validate instance can transition
 	if !i.IsActive() {
 		return InstanceNotActiveError(i.id, i.status)
 	}
 
 	if toState == "" {
-		return InvalidTransitionError(i.currentState, toState, event)
+		return InvalidTransitionError(i.currentState, toState, eventName)
 	}
 
-	if event == "" {
+	if eventName == "" {
 		return InvalidInstanceError("event name cannot be empty")
 	}
 
@@ -230,17 +258,21 @@ func (i *Instance) TransitionWithSubState(toState string, toSubState SubState, e
 		transition = NewTransitionWithSubStates(
 			i.currentState,
 			toState,
-			event,
+			eventName,
 			actor,
 			i.currentSubState,
 			toSubState,
 		)
 	} else {
-		transition = NewTransition(i.currentState, toState, event, actor)
+		transition = NewTransition(i.currentState, toState, eventName, actor)
 	}
 
 	transition.SetMetadata(metadata)
 	transition.SetData(i.data) // Snapshot current data
+
+	// Store previous state and sub-state for event
+	previousState := i.currentState
+	previousSubState := i.currentSubState
 
 	// Apply transition
 	i.currentState = toState
@@ -248,6 +280,37 @@ func (i *Instance) TransitionWithSubState(toState string, toSubState SubState, e
 	i.transitions = append(i.transitions, transition)
 	i.updatedAt = shared.Now()
 	i.version = i.version.Increment()
+
+	// Record state changed event
+	i.recordEvent(event.NewStateChanged(
+		i.id,
+		previousState,
+		toState,
+		eventName,
+		actor,
+		transition.ID(),
+		i.variables.ToMap(),
+	))
+
+	// If sub-state changed, record sub-state changed event (R17)
+	if !previousSubState.Equals(toSubState) && (!previousSubState.IsZero() || !toSubState.IsZero()) {
+		fromSubStateID := ""
+		if !previousSubState.IsZero() {
+			fromSubStateID = previousSubState.ID()
+		}
+		toSubStateID := ""
+		if !toSubState.IsZero() {
+			toSubStateID = toSubState.ID()
+		}
+
+		i.recordEvent(event.NewSubStateChanged(
+			i.id,
+			i.currentState,
+			fromSubStateID,
+			toSubStateID,
+			actor,
+		))
+	}
 
 	return nil
 }
@@ -262,6 +325,14 @@ func (i *Instance) Complete(actor shared.ID) error {
 	i.completedAt = shared.Now()
 	i.updatedAt = shared.Now()
 	i.version = i.version.Increment()
+
+	// Record instance completed event
+	i.recordEvent(event.NewInstanceCompleted(
+		i.id,
+		i.currentState,
+		actor,
+		i.data.ToMap(),
+	))
 
 	return nil
 }
@@ -282,6 +353,14 @@ func (i *Instance) Cancel(actor shared.ID, reason string) error {
 		i.data = i.data.Set("cancellation_reason", reason)
 	}
 
+	// Record instance canceled event
+	i.recordEvent(event.NewInstanceCanceled(
+		i.id,
+		i.currentState,
+		reason,
+		actor,
+	))
+
 	return nil
 }
 
@@ -301,11 +380,19 @@ func (i *Instance) Fail(actor shared.ID, reason string) error {
 		i.data = i.data.Set("failure_reason", reason)
 	}
 
+	// Record instance failed event
+	i.recordEvent(event.NewInstanceFailed(
+		i.id,
+		i.currentState,
+		reason,
+		actor,
+	))
+
 	return nil
 }
 
 // Pause pauses the instance execution.
-func (i *Instance) Pause(actor shared.ID) error {
+func (i *Instance) Pause(actor shared.ID, reason string) error {
 	if i.status != StatusRunning {
 		return InvalidInstanceError("can only pause running instances")
 	}
@@ -313,6 +400,13 @@ func (i *Instance) Pause(actor shared.ID) error {
 	i.status = StatusPaused
 	i.updatedAt = shared.Now()
 	i.version = i.version.Increment()
+
+	// Record instance paused event
+	i.recordEvent(event.NewInstancePaused(
+		i.id,
+		actor,
+		reason,
+	))
 
 	return nil
 }
@@ -326,6 +420,12 @@ func (i *Instance) Resume(actor shared.ID) error {
 	i.status = StatusRunning
 	i.updatedAt = shared.Now()
 	i.version = i.version.Increment()
+
+	// Record instance resumed event
+	i.recordEvent(event.NewInstanceResumed(
+		i.id,
+		actor,
+	))
 
 	return nil
 }

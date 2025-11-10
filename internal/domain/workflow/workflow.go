@@ -3,6 +3,7 @@ package workflow
 import (
 	"fmt"
 
+	"github.com/LaFabric-LinkTIC/FlowEngine/internal/domain/event"
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/domain/shared"
 )
 
@@ -14,20 +15,26 @@ type Workflow struct {
 	version      Version
 	description  string
 	initialState State
-	states       map[string]State // keyed by state ID
-	events       map[string]Event // keyed by event name
+	states       map[string]State        // keyed by state ID
+	events       map[string]Event        // keyed by event name
+	domainEvents []event.DomainEvent     // Domain events to be published
 	createdAt    shared.Timestamp
 	updatedAt    shared.Timestamp
+	createdBy    shared.ID               // Added to track creator
 }
 
 // NewWorkflow creates a new Workflow with the given name and initial state.
-func NewWorkflow(name string, initialState State) (*Workflow, error) {
+func NewWorkflow(name string, initialState State, createdBy shared.ID) (*Workflow, error) {
 	if name == "" {
 		return nil, InvalidWorkflowError("name cannot be empty")
 	}
 
 	if err := initialState.Validate(); err != nil {
 		return nil, InvalidWorkflowError(fmt.Sprintf("invalid initial state: %v", err))
+	}
+
+	if !createdBy.IsValid() {
+		return nil, InvalidWorkflowError("created by actor ID is invalid")
 	}
 
 	now := shared.Now()
@@ -40,12 +47,22 @@ func NewWorkflow(name string, initialState State) (*Workflow, error) {
 		initialState: initialState,
 		states:       make(map[string]State),
 		events:       make(map[string]Event),
+		domainEvents: []event.DomainEvent{},
 		createdAt:    now,
 		updatedAt:    now,
+		createdBy:    createdBy,
 	}
 
 	// Add initial state to states map
 	w.states[initialState.ID()] = initialState
+
+	// Record workflow created event
+	w.recordEvent(event.NewWorkflowCreated(
+		w.id,
+		name,
+		initialState.ID(),
+		createdBy,
+	))
 
 	return w, nil
 }
@@ -83,6 +100,26 @@ func (w *Workflow) CreatedAt() shared.Timestamp {
 // UpdatedAt returns the last update timestamp.
 func (w *Workflow) UpdatedAt() shared.Timestamp {
 	return w.updatedAt
+}
+
+// CreatedBy returns the ID of the actor who created the workflow.
+func (w *Workflow) CreatedBy() shared.ID {
+	return w.createdBy
+}
+
+// DomainEvents returns all domain events and clears the internal event list.
+// This follows the pattern where the aggregate generates events, and the
+// application layer is responsible for dispatching them after persistence.
+func (w *Workflow) DomainEvents() []event.DomainEvent {
+	events := make([]event.DomainEvent, len(w.domainEvents))
+	copy(events, w.domainEvents)
+	w.domainEvents = []event.DomainEvent{} // Clear events after returning
+	return events
+}
+
+// recordEvent adds a domain event to the workflow's event list.
+func (w *Workflow) recordEvent(evt event.DomainEvent) {
+	w.domainEvents = append(w.domainEvents, evt)
 }
 
 // SetDescription sets the workflow description.
