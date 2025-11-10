@@ -1385,6 +1385,156 @@ Como sistema, quiero validar permisos específicos para operaciones de clonació
    **THEN** todas las acciones de usuarios clonados SHALL registrarse en tabla de auditoría
    **AND** el registro SHALL incluir: user_id, action, timestamp, ip_address, accessed_data
 
+#### R15.9: Clonación con Aprobación Previa (Integración con R18)
+
+**User Story**
+Como administrador de procesos, quiero que ciertas clonaciones requieran aprobación de un departamento o supervisor antes de crearse, para mantener control sobre operaciones sensibles o costosas.
+
+**Acceptance Criteria**
+
+1. **WHEN** se configura un workflow con clonación que requiere aprobación
+   **THEN** el archivo YAML SHALL incluir en `cloning_config`:
+   ```yaml
+   cloning_config:
+     enabled: true
+     requires_approval: true
+     approval_config:
+       type: "escalation"  # Usa el sistema de escalamientos (R18)
+       department_id: "supervisors"  # Departamento que debe aprobar
+       approval_guard: has_role:supervisor  # Guard adicional
+       auto_approve_conditions:  # Opcional: casos de auto-aprobación
+         - field_equals:data.priority:low
+         - clone_count_less_than:3
+   ```
+
+2. **WHEN** un gestor inicia una clonación que requiere aprobación mediante POST /api/v1/instances/:id/clone
+   **THEN** el sistema SHALL validar todas las condiciones normales de R15.1
+   **AND** el sistema SHALL verificar `requires_approval` en la configuración del workflow
+   **AND** si `requires_approval = true`, el sistema SHALL proceder al flujo de aprobación
+
+3. **WHEN** se determina que la clonación requiere aprobación
+   **THEN** el sistema SHALL evaluar `auto_approve_conditions` (si existen)
+   **AND** si todas las condiciones de auto-aprobación se cumplen, el sistema SHALL crear las instancias clonadas inmediatamente
+   **AND** si NO se cumplen las condiciones, el sistema SHALL crear un escalamiento (R18) antes de crear las clonaciones
+
+4. **WHEN** se crea el escalamiento de aprobación
+   **THEN** el sistema SHALL usar el endpoint interno equivalente a POST /api/v1/instances/:id/escalate
+   **AND** el escalamiento SHALL incluir:
+   - `department_id`: del approval_config
+   - `reason`: "Clone approval request: {clone_reason}"
+   - `metadata`: incluye toda la información del request de clonación:
+     ```json
+     {
+       "clone_request": {
+         "assignees": [...],
+         "consolidator_id": "...",
+         "reason": "...",
+         "timeout_duration": "...",
+         "metadata": {...}
+       },
+       "approval_type": "clone_creation"
+     }
+     ```
+   **AND** el sistema SHALL cambiar el subestado de la instancia principal a "awaiting_clone_approval"
+   **AND** el sistema SHALL retornar HTTP 202 Accepted (en lugar de 201 Created)
+   **AND** la respuesta SHALL incluir:
+   ```json
+   {
+     "status": "pending_approval",
+     "escalation_id": "uuid-del-escalamiento",
+     "approval_required_from": "supervisors",
+     "message": "Clone request submitted for approval"
+   }
+   ```
+
+5. **WHEN** el departamento aprueba el escalamiento mediante POST /api/v1/instances/:id/escalation-reply
+   **THEN** el sistema SHALL validar que response contenga aprobación explícita
+   **AND** el sistema SHALL extraer el clone_request original del metadata del escalamiento
+   **AND** el sistema SHALL ejecutar la creación de clonaciones automáticamente con los parámetros originales
+   **AND** el sistema SHALL cambiar el subestado de la instancia a "clone_approved_in_progress"
+   **AND** el sistema SHALL generar evento de dominio "CloneApprovedAndCreated"
+   **AND** el sistema SHALL notificar al gestor original que las clonaciones fueron aprobadas y creadas
+
+6. **WHEN** el departamento rechaza el escalamiento
+   **THEN** el sistema SHALL marcar el escalamiento como "closed" sin crear las clonaciones
+   **AND** el sistema SHALL cambiar el subestado de la instancia de vuelta al anterior
+   **AND** el sistema SHALL generar evento "CloneRequestRejected"
+   **AND** el sistema SHALL notificar al gestor original con el motivo del rechazo
+   **AND** el sistema SHALL registrar en el historial del trámite principal el rechazo de la clonación
+
+7. **WHEN** se consulta el estado de una solicitud de clonación pendiente de aprobación
+   **THEN** el endpoint GET /api/v1/instances/:id/clone-requests SHALL estar disponible
+   **AND** el sistema SHALL retornar:
+   ```json
+   {
+     "pending_requests": [
+       {
+         "escalation_id": "...",
+         "requested_at": "...",
+         "requested_by": "...",
+         "status": "pending_approval",
+         "approval_department": "supervisors",
+         "assignees_count": 5,
+         "timeout_duration": "24h"
+       }
+     ]
+   }
+   ```
+
+8. **IF** el gestor cancela la solicitud de clonación antes de la aprobación
+   **THEN** el endpoint DELETE /api/v1/escalations/:escalation_id SHALL permitir la cancelación
+   **AND** el sistema SHALL validar que metadata.approval_type = "clone_creation"
+   **AND** el sistema SHALL validar que el actor sea el solicitante original
+   **AND** el sistema SHALL cerrar el escalamiento con status = "canceled"
+   **AND** el sistema SHALL restaurar el subestado de la instancia
+
+9. **WHEN** se configura tiempo de expiración para aprobaciones
+   **THEN** el escalamiento SHALL tener su propio expires_at independiente
+   **AND** si el escalamiento expira sin respuesta, el sistema SHALL rechazar automáticamente la clonación
+   **AND** el sistema SHALL generar evento "CloneRequestExpiredWithoutApproval"
+
+10. **WHEN** el departamento aprobador solicita modificaciones antes de aprobar
+    **THEN** el sistema SHALL permitir respuesta con status = "requires_changes"
+    **AND** el metadata de la respuesta SHALL incluir `requested_changes`
+    **AND** el sistema SHALL notificar al gestor original
+    **AND** el gestor SHALL poder reenviar la solicitud con POST /api/v1/instances/:id/clone/resubmit
+    **AND** el resubmit SHALL actualizar el escalamiento existente (no crear uno nuevo)
+
+11. **WHEN** se consultan estadísticas de aprobaciones de clonación
+    **THEN** GET /api/v1/queries/clone-approval-statistics SHALL incluir:
+    - Total de solicitudes de clonación
+    - Tasa de aprobación
+    - Tiempo promedio de aprobación
+    - Solicitudes rechazadas vs aprobadas
+    - Solicitudes expiradas sin respuesta
+
+**Ejemplo de Flujo Completo**:
+
+```
+1. Gestor solicita clonar a 5 usuarios
+   → Sistema detecta requires_approval: true
+   → Sistema crea escalamiento a "supervisors"
+   → Instancia pasa a subestado "awaiting_clone_approval"
+   → HTTP 202 Accepted
+
+2. Supervisor revisa y aprueba
+   → POST /api/v1/instances/:id/escalation-reply
+   → Sistema lee clone_request del metadata
+   → Sistema crea automáticamente 5 instancias clonadas
+   → Instancia pasa a subestado "clone_approved_in_progress"
+   → Notifica al gestor original
+
+3. Usuarios clonados reciben sus asignaciones
+   → Flujo normal de R15.2-R15.6 continúa
+```
+
+**Separación de Conceptos Mantenida**:
+- Escalamiento sigue siendo consulta/aprobación externa (R18)
+- Clonación sigue siendo distribución de trabajo (R15)
+- La integración es opcional y configurable
+- Escalamiento es un prerequisito, no el mismo concepto
+- Ambos sistemas funcionan independientemente cuando no hay integración
+
 ---
 
 ### R16: Formato de API - JSON:API Specification
