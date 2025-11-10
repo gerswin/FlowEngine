@@ -177,7 +177,17 @@
     - Métodos `Get(key)`, `Set(key, value)`, `ToMap()`
   - Implementar `internal/domain/instance/variables.go`:
     - Similar a Data, pero para variables de workflow
-  - _Requirements: DDD Value Objects, Optimistic Locking_
+  - Implementar `internal/domain/instance/sub_state.go` (R17):
+    - Type `SubState struct` con: id, name, description
+    - Constructor `NewSubState(id, name string) (SubState, error)`
+    - Método `Validate() error` (verificar ID pattern)
+    - Método `Equals(other SubState) bool`
+  - Implementar `internal/domain/instance/transition_metadata.go` (R23):
+    - Type `TransitionMetadata struct` con: reason, feedback, metadata map
+    - Constructor `NewTransitionMetadata(reason, feedback string, metadata map)`
+    - Método `Validate(schema *MetadataSchema) error` (validar tipos, required, constraints)
+    - Type `MetadataSchema struct` para definir validaciones (required, optional, types)
+  - _Requirements: DDD Value Objects, Optimistic Locking, R17, R23_
 
 - [ ] 4.2 Instance transition entity
   - Implementar `internal/domain/instance/transition.go`:
@@ -192,6 +202,7 @@
     - Type `Instance struct` con:
       - id, workflowID, parentID (para subprocesos)
       - currentState, previousState
+      - currentSubState, previousSubState (*SubState) (R17)
       - version (optimistic locking)
       - status, data, variables
       - history ([]Transition)
@@ -206,11 +217,28 @@
       - Agregar a history
       - Si estado final, llamar `complete()`
       - Generar evento de dominio `StateChanged`
+    - Método `TransitionWithMetadata(ctx, wf, eventName, actorID, reason, feedback string, metadata map) error` (R23):
+      - Validar metadata según schema del evento
+      - Ejecutar transición normal
+      - Incluir reason, feedback, metadata en transition history
+    - Método `TransitionSubState(ctx, wf, newSubState SubState) error` (R17):
+      - Cambiar currentSubState sin afectar currentState
+      - Guardar previousSubState
+      - Incrementar version
+      - Agregar a history con from_sub_state y to_sub_state
+      - Generar evento SubStateChanged
+    - Método `Reclassify(newType, reason, actor string) error` (R19):
+      - Actualizar data.tipo
+      - Mantener currentState sin cambios
+      - Incrementar version
+      - Crear transición especial con event="reclassify"
+      - Generar evento DocumentReclassified
     - Métodos `Pause()`, `Resume()`, `Cancel()` error
     - Métodos `SetVariable(key, value)`, `GetVariable(key)`
+    - Métodos `CurrentSubState()`, `PreviousSubState()` (R17)
     - Método `DomainEvents() []event.DomainEvent` (retorna y limpia)
     - Getters inmutables
-  - _Requirements: DDD Aggregates, Domain Events, Business Logic_
+  - _Requirements: DDD Aggregates, Domain Events, Business Logic, R17, R19, R23_
 
 - [ ] 4.4 Instance repository port
   - Crear `internal/domain/instance/repository.go`:
@@ -288,17 +316,25 @@
 
 - [ ] 6.1 Migraciones de base de datos
   - Crear `internal/infrastructure/persistence/postgres/migrations/001_initial.up.sql`:
-    - Tabla `workflows` (id, name, description, version, config JSONB, created_at, updated_at, deleted_at)
-    - Tabla `workflow_instances` (id UUID, workflow_id, parent_id, current_state, previous_state, version, status, data JSONB, variables JSONB, current_actor, current_role, created_at, updated_at, completed_at, locked_by, locked_at, lock_expires_at)
-    - Tabla `workflow_transitions` (id, instance_id, event, from_state, to_state, actor, actor_role, data JSONB, duration_ms, created_at)
+    - Tabla `workflows` (id, name, description, version, config JSONB, is_template BOOLEAN DEFAULT FALSE, template_id UUID, created_at, updated_at, deleted_at)
+    - Tabla `workflow_instances` (id UUID, workflow_id, parent_id, current_state, previous_state, current_sub_state, previous_sub_state, version, status, data JSONB, variables JSONB, current_actor, current_role, created_at, updated_at, completed_at, locked_by, locked_at, lock_expires_at)
+    - Tabla `workflow_transitions` (id, instance_id, event, from_state, to_state, from_sub_state, to_sub_state, actor, actor_role, data JSONB, reason TEXT, feedback TEXT, metadata JSONB, duration_ms, created_at)
     - Tabla `workflow_timers` (id, instance_id, state, event_on_timeout, created_at, expires_at, fired_at)
+    - Tabla `workflow_escalations` (id, instance_id, department_id, reason TEXT, escalated_by, escalated_at, status, response TEXT, responded_by, responded_at, closed_by, closed_at)
     - Tabla `webhooks` (id, workflow_id, url, events text[], secret, headers JSONB, retry_config JSONB, active, created_at, updated_at)
     - Tabla `external_events` (id, instance_id, event_type, payload JSONB, processed_at, error_message, retry_count, created_at)
-    - Índices optimizados (ver design.md sección 5.1)
-    - Constraints y checks
+    - Índices optimizados:
+      - workflow_instances: idx_instances_workflow, idx_instances_parent, idx_instances_status, idx_instances_actor, idx_instances_substates (R17)
+      - workflow_transitions: idx_transitions_instance, idx_transitions_has_feedback (R23), idx_transitions_metadata GIN (R23)
+      - workflow_escalations: idx_escalations_instance, idx_escalations_department, idx_escalations_status (R18)
+      - workflows: idx_workflows_template, idx_workflows_is_template (R21)
+    - Constraints y checks:
+      - status CHECK IN ('running', 'paused', 'completed', 'canceled', 'failed')
+      - escalation_status CHECK IN ('pending', 'responded', 'closed', 'canceled')
+      - workflows.template_id FK REFERENCES workflows(id)
   - Crear `001_initial.down.sql` con DROP tables
   - Crear script `scripts/migrate.sh` usando golang-migrate
-  - _Requirements: Schema PostgreSQL, Índices, Migraciones_
+  - _Requirements: R17, R18, R21, R23, Schema PostgreSQL, Índices, Migraciones_
 
 - [ ] 6.2 PostgreSQL connection y configuración
   - Implementar `internal/infrastructure/persistence/postgres/connection.go`:
@@ -962,9 +998,457 @@
   - Test de scheduler dispara eventos
   - _Requirements: Timer Testing_
 
-### Fase 19: Command Line Interfaces
+### Fase 19: Domain Layer - Escalamientos Manuales (R18)
 
-- [ ] 19.1 API Server entrypoint
+- [ ] 19.1 Escalation aggregate
+  - Crear `internal/domain/escalation/escalation.go`:
+    - Type `Escalation struct` con:
+      - id, instanceID, departmentID
+      - reason, escalatedBy, escalatedAt
+      - status (EscalationStatus enum)
+      - response, respondedBy, respondedAt
+      - closedBy, closedAt
+      - domainEvents []event.DomainEvent
+    - Constructor `NewEscalation(instanceID, departmentID, reason, escalatedBy) (*Escalation, error)`
+    - Método `Reply(response, respondedBy string) error`:
+      - Validar status == pending
+      - Cambiar status a responded
+      - Guardar response, respondedBy, respondedAt
+      - Generar evento EscalationReplied
+    - Método `Close(closedBy string) error`:
+      - Validar status == responded
+      - Cambiar status a closed
+      - Guardar closedBy, closedAt
+      - Generar evento EscalationClosed
+    - Método `Cancel() error`:
+      - Validar status == pending
+      - Cambiar status a canceled
+      - Generar evento EscalationCanceled
+    - Métodos `Status()`, `CanCancel() bool`, `DomainEvents()`
+  - _Requirements: R18, DDD Aggregates, Domain Events_
+
+- [ ] 19.2 Escalation value objects y errors
+  - Crear `internal/domain/escalation/status.go`:
+    - Type `EscalationStatus` enum: Pending, Responded, Closed, Canceled
+    - Métodos `IsActive() bool`, `IsFinal() bool`
+  - Crear `internal/domain/escalation/department_id.go`:
+    - Type `DepartmentID struct` con validación
+    - Constructor `NewDepartmentID(value string) (DepartmentID, error)`
+  - Crear `internal/domain/escalation/errors.go`:
+    - `ErrEscalationNotFound`, `ErrInvalidEscalationStatus`
+    - `ErrCannotReply`, `ErrCannotClose`, `ErrCannotCancel`
+  - _Requirements: R18, DDD Value Objects_
+
+- [ ] 19.3 Escalation repository port
+  - Crear `internal/domain/escalation/repository.go`:
+    - Interface `Repository` con métodos:
+      - `Save(ctx, *Escalation) error`
+      - `FindByID(ctx, ID) (*Escalation, error)`
+      - `FindByInstance(ctx, instanceID) ([]*Escalation, error)`
+      - `FindByDepartment(ctx, departmentID string, status EscalationStatus) ([]*Escalation, error)`
+      - `FindPending(ctx) ([]*Escalation, error)`
+  - _Requirements: R18, Repository Pattern_
+
+- [ ] 19.4 Escalation repository adapter (PostgreSQL)
+  - Implementar `internal/infrastructure/persistence/postgres/escalation_repository.go`:
+    - Type `EscalationRepository struct` con db *sql.DB
+    - Implementar todos los métodos de la interface
+    - Mapeo domain ↔ DB model
+    - Queries optimizados con índices
+  - _Requirements: R18, Repository Adapter_
+
+- [ ] 19.5 Escalation use cases
+  - Implementar `internal/application/escalation/escalate_instance.go`:
+    - Type `EscalateInstanceCommand` (InstanceID, DepartmentID, Reason, EscalatedBy)
+    - Ejecutar:
+      - 1. Cargar instance, validar existe y está activa
+      - 2. Crear escalation con NewEscalation()
+      - 3. Guardar en escalationRepo
+      - 4. Publicar evento DocumentEscalated
+      - 5. Retornar EscalationID
+  - Implementar `internal/application/escalation/reply_escalation.go`:
+    - Type `ReplyEscalationCommand` (EscalationID, Response, RespondedBy)
+    - Ejecutar:
+      - 1. Cargar escalation
+      - 2. Llamar escalation.Reply()
+      - 3. Guardar cambios
+      - 4. Publicar eventos
+  - Implementar `internal/application/escalation/close_escalation.go`:
+    - Similar a Reply
+  - Implementar `internal/application/escalation/query_escalations.go`:
+    - Queries con filtros: por instancia, departamento, status
+  - _Requirements: R18, Use Case Pattern_
+
+- [ ] 19.6 Escalation HTTP handlers
+  - Implementar `internal/infrastructure/http/rest/handlers/escalation_handler.go`:
+    - `EscalateInstance(c)` → POST /instances/:id/escalations
+    - `ReplyEscalation(c)` → POST /escalations/:id/reply
+    - `CloseEscalation(c)` → POST /escalations/:id/close
+    - `CancelEscalation(c)` → DELETE /escalations/:id
+    - `GetEscalation(c)` → GET /escalations/:id
+    - `GetInstanceEscalations(c)` → GET /instances/:id/escalations
+    - `GetDepartmentEscalations(c)` → GET /departments/:id/escalations
+    - Validar permisos según rol
+    - Mapear errors → HTTP status codes
+  - _Requirements: R18, HTTP Handlers_
+
+- [ ]* 19.7 Tests de escalamientos
+  - Test `internal/domain/escalation/escalation_test.go`:
+    - `TestNewEscalation_Success`
+    - `TestEscalation_Reply_Success`
+    - `TestEscalation_Reply_InvalidStatus_Error`
+    - `TestEscalation_Close_Success`
+    - `TestEscalation_Cancel_OnlyWhenPending`
+  - Test de use cases con mocks
+  - Test de integration con PostgreSQL
+  - Coverage objetivo: >85%
+  - _Requirements: R18, Unit Testing, Integration Testing_
+
+### Fase 20: Domain Layer - Reclasificación de Instancias (R19)
+
+- [ ] 20.1 Reclassification domain logic
+  - Extender `internal/domain/instance/instance.go` (ya implementado en Fase 4.3):
+    - Método `Reclassify(newType, reason, actor string) error`
+  - Crear `internal/domain/instance/reclassification.go`:
+    - Type `ReclassificationType struct` para validar tipos permitidos
+    - Función `ValidateReclassification(fromType, toType string) error`
+  - Crear evento `internal/domain/event/document_reclassified.go`:
+    - Type `DocumentReclassified struct` implementando DomainEvent
+    - Campos: instanceID, fromType, toType, reason, actor, occurredAt
+  - _Requirements: R19, Domain Logic_
+
+- [ ] 20.2 Reclassification use case
+  - Implementar `internal/application/instance/reclassify_instance.go`:
+    - Type `ReclassifyInstanceCommand` (InstanceID, NewType, Reason, Actor)
+    - Type `ReclassifyInstanceResult` (InstanceID, OldType, NewType, Version)
+    - Ejecutar:
+      - 1. Validar command (campos requeridos)
+      - 2. Adquirir distributed lock sobre instancia
+      - 3. Cargar instance
+      - 4. Validar permisos del actor (requires senior role via guard)
+      - 5. Validar tipos old → new son diferentes
+      - 6. Llamar instance.Reclassify()
+      - 7. Guardar con instanceRepo.Save()
+      - 8. Publicar evento DocumentReclassified
+      - 9. Liberar lock
+      - 10. Retornar resultado
+  - _Requirements: R19, Use Case Pattern_
+
+- [ ] 20.3 Reclassification HTTP handler
+  - Implementar endpoint en `internal/infrastructure/http/rest/handlers/instance_handler.go`:
+    - `ReclassifyInstance(c)` → POST /instances/:id/reclassify
+    - Request body: `{new_type, reason}`
+    - Validar permisos (solo senior users)
+    - Ejecutar use case
+    - Retornar 200 OK con resultado
+    - Manejo de errores: 403 si no tiene permisos, 409 si lock/conflict
+  - Agregar ruta en router
+  - _Requirements: R19, HTTP Handlers, Authorization_
+
+- [ ] 20.4 Reclassification workflow configuration
+  - Extender `internal/infrastructure/config/loader/types.go`:
+    - Agregar campo `Reclassification *ReclassificationConfig` a WorkflowDefinition
+    - Type `ReclassificationConfig struct` con:
+      - Enabled bool
+      - AllowedTypes []string
+      - RequiresSenior bool
+  - Actualizar YAML loader para parsear configuración
+  - Validar configuración al cargar workflow
+  - _Requirements: R19, Configuration_
+
+- [ ]* 20.5 Tests de reclasificación
+  - Test `TestInstance_Reclassify_Success`
+  - Test `TestInstance_Reclassify_SameType_Error`
+  - Test `TestReclassifyUseCase_Execute_Success`
+  - Test `TestReclassifyUseCase_Execute_NoPermissions_Error`
+  - Test del handler HTTP con validación de permisos
+  - Coverage objetivo: >85%
+  - _Requirements: R19, Unit Testing_
+
+### Fase 21: Domain Layer - Guards de Transición Avanzados (R20)
+
+- [ ] 21.1 Guard interface y registry
+  - Crear `internal/domain/workflow/guard.go`:
+    - Interface `Guard` con método:
+      - `Validate(ctx context.Context, instance *instance.Instance, actor *actor.Actor) error`
+    - Interface `GuardRegistry` con métodos:
+      - `Register(name string, guard Guard) error`
+      - `Get(name string) (Guard, error)`
+      - `Has(name string) bool`
+    - Type `GuardRegistry struct` (singleton global)
+    - Función `RegisterGuard(name, guard)` y `GetGuard(name)`
+  - _Requirements: R20, Strategy Pattern_
+
+- [ ] 21.2 Guards pre-definidos - Roles
+  - Implementar `internal/domain/workflow/guards/role_guards.go`:
+    - `HasRoleGuard` struct:
+      - Config: role string
+      - Validate: verificar actor.HasRole(role)
+    - `HasAnyRoleGuard` struct:
+      - Config: roles []string
+      - Validate: verificar actor.HasAnyRole(roles)
+    - Registrar en init(): "has_role", "has_any_role"
+  - _Requirements: R20, Guard Implementation_
+
+- [ ] 21.3 Guards pre-definidos - Asignación
+  - Implementar `internal/domain/workflow/guards/assignment_guards.go`:
+    - `IsAssignedToActorGuard`: Validar instance.CurrentActor == actor.ID
+    - `IsNotAssignedGuard`: Validar instance.CurrentActor == nil
+    - Registrar: "is_assigned_to_actor", "is_not_assigned"
+  - _Requirements: R20, Guard Implementation_
+
+- [ ] 21.4 Guards pre-definidos - Campos
+  - Implementar `internal/domain/workflow/guards/field_guards.go`:
+    - `FieldEqualsGuard`: data[field] == value
+    - `FieldNotEmptyGuard`: data[field] != nil && != ""
+    - `FieldExistsGuard`: data[field] existe
+    - `FieldMatchesGuard`: regex.Match(data[field])
+    - Registrar: "field_equals", "field_not_empty", "field_exists", "field_matches"
+  - _Requirements: R20, Guard Implementation_
+
+- [ ] 21.5 Guards pre-definidos - Tiempo
+  - Implementar `internal/domain/workflow/guards/time_guards.go`:
+    - `InstanceAgeLessThanGuard`: now - instance.CreatedAt < duration
+    - `InstanceAgeMoreThanGuard`: now - instance.CreatedAt > duration
+    - `BeforeTimeGuard`: now < time
+    - `AfterTimeGuard`: now > time
+    - `OnWeekdayGuard`: now.Weekday() in [Mon..Fri]
+    - Registrar: "instance_age_less_than", "instance_age_more_than", "before_time", "after_time", "on_weekday"
+  - _Requirements: R20, Guard Implementation_
+
+- [ ] 21.6 Guards pre-definidos - Estado y Datos
+  - Implementar `internal/domain/workflow/guards/state_guards.go`:
+    - `SubStateEqualsGuard`: currentSubState == value (R17)
+    - `ParentStateEqualsGuard`: parent.CurrentState == value
+  - Implementar `internal/domain/workflow/guards/data_guards.go`:
+    - `DataSizeLessThanGuard`: len(data) < maxSize
+    - `HasAttachmentsGuard`: data["attachments"] != nil && len > 0
+    - Registrar todos
+  - _Requirements: R20, Guard Implementation_
+
+- [ ] 21.7 Guard evaluation con lógica OR/AND
+  - Extender `internal/domain/workflow/workflow.go`:
+    - Método `CanTransition(from State, event Event, instance, actor) (bool, error)`:
+      - Evaluar lista de guards del evento
+      - AND: Todos deben pasar (short-circuit en primer fallo)
+      - OR: Detectar sintaxis `or:` en YAML, al menos uno debe pasar
+      - Retornar error detallado indicando qué guard falló
+  - Implementar `internal/domain/workflow/guard_evaluator.go`:
+    - Type `GuardEvaluator struct`
+    - Método `EvaluateAll(guards []GuardConfig, instance, actor) error`
+    - Soporte para anidación hasta 3 niveles
+  - _Requirements: R20, Complex Logic Evaluation_
+
+- [ ] 21.8 Guard configuration en YAML
+  - Extender `internal/infrastructure/config/loader/types.go`:
+    - Type `GuardConfig struct` con:
+      - Name string
+      - Config map[string]interface{}
+      - OR []GuardConfig (para lógica OR)
+    - Agregar campo `Guards []GuardConfig` a EventConfig
+  - Actualizar YAML loader para parsear guards
+  - Validar que todos los guards existan en registry al cargar
+  - _Requirements: R20, Configuration_
+
+- [ ]* 21.9 Tests de guards
+  - Test de cada guard pre-definido (15+ tests)
+  - Test de GuardEvaluator con lógica AND
+  - Test de GuardEvaluator con lógica OR
+  - Test de anidación de guards
+  - Test de workflow.CanTransition con guards
+  - Test de configuración YAML con guards
+  - Coverage objetivo: >90%
+  - _Requirements: R20, Unit Testing_
+
+### Fase 22: Application - Plantillas de Workflows (R21)
+
+- [ ] 22.1 Template domain logic
+  - Extender `internal/domain/workflow/workflow.go`:
+    - Agregar campo `isTemplate bool`
+    - Agregar campo `templateID *ID` (referencia al template origen)
+    - Método `MarkAsTemplate() error`
+    - Método `IsTemplate() bool`
+    - Validar: No se pueden crear instancias directamente de templates
+  - _Requirements: R21, Domain Logic_
+
+- [ ] 22.2 Workflow cloning logic
+  - Implementar `internal/domain/workflow/cloner.go`:
+    - Type `WorkflowCloner struct`
+    - Método `Clone(template *Workflow, overrides map[string]interface{}) (*Workflow, error)`:
+      - 1. Validar template.IsTemplate() == true
+      - 2. Deep copy de toda la configuración
+      - 3. Aplicar overrides con dot notation (ej: "states.filed.timeout": "48h")
+      - 4. Establecer templateID = template.ID
+      - 5. Validar workflow resultante
+      - 6. Retornar nuevo workflow
+    - Función helper `applyOverride(config, path string, value interface{}) error`
+      - Parsear dot notation: "states.filed.timeout" → ["states", "filed", "timeout"]
+      - Navegar estructura anidada
+      - Aplicar valor en la ruta correcta
+  - _Requirements: R21, Deep Copy, Dot Notation_
+
+- [ ] 22.3 Template use cases
+  - Implementar `internal/application/workflow/clone_from_template.go`:
+    - Type `CloneWorkflowCommand` (TemplateID, NewID, Name, Description, Overrides map)
+    - Type `CloneWorkflowResult` (WorkflowID, TemplateID, AppliedOverrides)
+    - Ejecutar:
+      - 1. Cargar template desde workflowRepo
+      - 2. Validar que isTemplate == true
+      - 3. Usar WorkflowCloner.Clone()
+      - 4. Aplicar overrides
+      - 5. Generar nuevo ID si NewID == nil
+      - 6. Actualizar name, description
+      - 7. Validar workflow completo
+      - 8. Guardar en workflowRepo
+      - 9. Generar evento WorkflowClonedFromTemplate
+      - 10. Retornar resultado
+  - Implementar `internal/application/workflow/mark_as_template.go`:
+    - Cargar workflow, llamar MarkAsTemplate(), guardar
+  - _Requirements: R21, Use Case Pattern_
+
+- [ ] 22.4 Template HTTP handlers
+  - Implementar endpoints en `internal/infrastructure/http/rest/handlers/workflow_handler.go`:
+    - `CloneFromTemplate(c)` → POST /workflows/from-template
+      - Request: `{template_id, name, description, overrides: {...}}`
+      - Ejecutar use case
+      - Retornar 201 Created con WorkflowResponse
+    - `MarkAsTemplate(c)` → POST /workflows/:id/mark-template
+      - Solo admin
+      - Retornar 200 OK
+    - Extender `ListWorkflows(c)` → GET /workflows?is_template=true
+      - Filtrar por isTemplate
+    - `GetTemplateDerivedWorkflows(c)` → GET /workflows?template_id=xxx
+      - Listar workflows derivados
+  - Agregar rutas en router
+  - _Requirements: R21, HTTP Handlers_
+
+- [ ] 22.5 Template repository support
+  - Extender `internal/infrastructure/persistence/postgres/workflow_repository.go`:
+    - Actualizar queries para incluir is_template, template_id
+    - Método `FindTemplates(ctx) ([]*Workflow, error)`
+    - Método `FindByTemplateID(ctx, templateID) ([]*Workflow, error)`
+    - Validar: No permitir crear instancias de templates
+  - _Requirements: R21, Repository Pattern_
+
+- [ ]* 22.6 Tests de plantillas
+  - Test `TestWorkflow_MarkAsTemplate_Success`
+  - Test `TestWorkflowCloner_Clone_ApplyOverrides`
+  - Test `TestWorkflowCloner_DotNotation_NestedPaths`
+  - Test `TestCloneFromTemplateUseCase_Success`
+  - Test `TestWorkflowRepo_PreventInstancesFromTemplate`
+  - Test de handlers HTTP
+  - Coverage objetivo: >85%
+  - _Requirements: R21, Unit Testing_
+
+### Fase 23: Application - Import/Export de Workflows (R22)
+
+- [ ] 23.1 Export workflow logic
+  - Implementar `internal/application/workflow/export_workflow.go`:
+    - Type `ExportWorkflowCommand` (WorkflowID, Format string)
+    - Type `ExportWorkflowResult` (Content []byte, Format, Filename, Checksum string)
+    - Ejecutar:
+      - 1. Cargar workflow desde repo
+      - 2. Serializar a YAML o JSON según format
+      - 3. Agregar metadata:
+         - schema_version: "2.0"
+         - exported_at: timestamp
+         - workflow: configuración completa
+      - 4. Calcular checksum SHA256 del contenido
+      - 5. Incluir checksum en metadata
+      - 6. Retornar contenido serializado
+  - _Requirements: R22, Serialization_
+
+- [ ] 23.2 Import workflow logic
+  - Implementar `internal/application/workflow/import_workflow.go`:
+    - Type `ImportWorkflowCommand` (Content []byte, Format, Mode, GenerateNewID bool)
+    - Type `ImportWorkflowResult` (WorkflowID, Warnings []string)
+    - Modo: "create" | "update" | "force"
+    - Ejecutar:
+      - 1. Parsear YAML/JSON
+      - 2. Validar schema_version y compatibilidad con versión actual
+      - 3. Verificar checksum si presente
+      - 4. Validar configuración del workflow
+      - 5. Verificar si workflow con ese ID ya existe:
+         - create: error si existe
+         - update: actualizar existente
+         - force: sobrescribir sin validar
+      - 6. Si GenerateNewID, crear nuevo UUID
+      - 7. Persistir workflow
+      - 8. Generar warnings para configs específicas (webhooks, etc)
+      - 9. Retornar resultado con warnings
+  - _Requirements: R22, Deserialization, Validation_
+
+- [ ] 23.3 Bulk import/export logic
+  - Implementar `internal/application/workflow/export_bulk.go`:
+    - Type `ExportBulkCommand` (WorkflowIDs []string, Format string)
+    - Type `ExportBulkResult` (ZipContent []byte, Manifest map)
+    - Ejecutar:
+      - 1. Exportar cada workflow individualmente
+      - 2. Crear ZIP archive con:
+         - workflow_<id>.yaml (o .json)
+         - manifest.json con metadata de todos
+      - 3. Manifest incluye: lista de workflows, versiones, dependencies
+      - 4. Retornar ZIP como []byte
+  - Implementar `internal/application/workflow/import_bulk.go`:
+    - Type `ImportBulkCommand` (ZipContent []byte, Mode string)
+    - Ejecutar:
+      - 1. Descomprimir ZIP
+      - 2. Leer manifest.json
+      - 3. Ordenar imports por dependencies
+      - 4. Importar cada workflow secuencialmente
+      - 5. Coleccionar errores y warnings
+      - 6. Retornar reporte de imports (success, failures)
+  - _Requirements: R22, Bulk Operations, ZIP_
+
+- [ ] 23.4 Version compatibility matrix
+  - Implementar `internal/application/workflow/version_compatibility.go`:
+    - Type `VersionCompatibility struct`
+    - Método `IsCompatible(fromVersion, toVersion string) (bool, error)`:
+      - Matriz de compatibilidad:
+        - 1.0 compatible con 1.x
+        - 2.0 requiere migración desde 1.x
+        - 2.1 compatible con 2.0
+      - Retornar error con mensaje si no compatible
+    - Método `Migrate(workflow, fromVersion, toVersion) (*Workflow, error)`:
+      - Aplicar transformaciones necesarias
+      - Actualizar schema_version
+  - _Requirements: R22, Version Management_
+
+- [ ] 23.5 Import/Export HTTP handlers
+  - Implementar endpoints en `internal/infrastructure/http/rest/handlers/workflow_handler.go`:
+    - `ExportWorkflow(c)` → GET /workflows/:id/export?format=yaml|json
+      - Ejecutar use case
+      - Set headers: Content-Type, Content-Disposition
+      - Retornar archivo para descarga
+    - `ImportWorkflow(c)` → POST /workflows/import?mode=create|update|force
+      - Request: multipart/form-data con archivo
+      - Ejecutar use case
+      - Retornar 201 Created con warnings
+    - `ExportBulk(c)` → POST /workflows/export-bulk
+      - Request: `{workflow_ids: [], format: "yaml"}`
+      - Retornar ZIP file
+    - `ImportBulk(c)` → POST /workflows/import-bulk?mode=create
+      - Request: ZIP file
+      - Retornar reporte de imports
+  - _Requirements: R22, HTTP Handlers, File Upload_
+
+- [ ]* 23.6 Tests de import/export
+  - Test `TestExportWorkflow_YAML_Success`
+  - Test `TestExportWorkflow_JSON_Success`
+  - Test `TestExportWorkflow_IncludesChecksum`
+  - Test `TestImportWorkflow_ValidFile_Success`
+  - Test `TestImportWorkflow_InvalidChecksum_Error`
+  - Test `TestImportWorkflow_IncompatibleVersion_Error`
+  - Test `TestVersionCompatibility_Matrix`
+  - Test `TestExportBulk_CreatesZIP`
+  - Test `TestImportBulk_ParsesManifest`
+  - Test de handlers HTTP con file upload
+  - Coverage objetivo: >85%
+  - _Requirements: R22, Unit Testing_
+
+### Fase 24: Command Line Interfaces
+
+- [ ] 24.1 API Server entrypoint
   - Implementar `cmd/api/main.go`:
     - 1. Cargar config con LoadConfig()
     - 2. Crear DI container con NewContainer(config)
@@ -976,7 +1460,7 @@
     - 8. container.Close()
   - _Requirements: Main Entrypoint, Graceful Shutdown_
 
-- [ ] 19.2 Worker entrypoint (timers)
+- [ ] 24.2 Worker entrypoint (timers)
   - Implementar `cmd/worker/main.go`:
     - Similar a API server pero sin HTTP
     - Start timer scheduler
@@ -984,7 +1468,7 @@
     - Process background tasks
   - _Requirements: Background Worker_
 
-- [ ] 19.3 CLI tool entrypoint
+- [ ] 24.3 CLI tool entrypoint
   - Implementar `cmd/cli/main.go`:
     - Commands:
       - `migrate up|down` (ejecutar migraciones)
@@ -993,9 +1477,9 @@
     - Usar cobra/cli library
   - _Requirements: CLI Tool_
 
-### Fase 20: Deployment y Configuración
+### Fase 25: Deployment y Configuración
 
-- [ ] 20.1 Dockerfile multi-stage
+- [ ] 25.1 Dockerfile multi-stage
   - Crear `Dockerfile`:
     - Stage 1: Builder (go build)
     - Stage 2: Runtime (alpine + binary)
@@ -1005,7 +1489,7 @@
     - CMD ["./flowengine"]
   - _Requirements: Docker, Multi-stage Build_
 
-- [ ] 20.2 Docker Compose
+- [ ] 25.2 Docker Compose
   - Crear `docker-compose.yml`:
     - Services: flowengine, postgres, redis, rabbitmq
     - Networks
@@ -1015,7 +1499,7 @@
     - Adicional: prometheus, grafana para observability
   - _Requirements: Docker Compose, Local Development_
 
-- [ ] 20.3 Kubernetes manifests
+- [ ] 25.3 Kubernetes manifests
   - Crear `deployments/k8s/deployment.yaml`:
     - Deployment con 3 replicas
     - Resource limits (memory, CPU)
@@ -1024,29 +1508,31 @@
   - Crear `deployments/k8s/configmap.yaml` y `secret.yaml`
   - _Requirements: Kubernetes, Production Deployment_
 
-- [ ] 20.4 Variables de entorno
+- [ ] 25.4 Variables de entorno
   - Crear `config/.env.example` con todas las variables
   - Documentar cada variable en README
   - _Requirements: Configuration Management_
 
-- [ ] 20.5 Prometheus config
+- [ ] 25.5 Prometheus config
   - Crear `deployments/prometheus.yml`:
     - Scrape config para flowengine:9090
     - Retention, storage
   - _Requirements: Monitoring Setup_
 
-### Fase 21: Ejemplo Completo - Flujo de Radicación
+### Fase 26: Ejemplo Completo - Flujo de Radicación
 
-- [ ] 21.1 Workflow radicación completo
+- [ ] 26.1 Workflow radicación completo
   - Verificar `internal/infrastructure/config/templates/radicacion.yaml` tiene:
     - 6 estados completos (radicar, asignar, gestionar, revisar, aprobar, enviar)
     - Todos los eventos con from/to correctos
     - Timeouts configurados
     - Validators y actions
     - Webhooks
-  - _Requirements: Workflow Configuration_
+    - Guards avanzados (R20)
+    - Configuración de metadata (R23)
+  - _Requirements: Workflow Configuration, R20, R23_
 
-- [ ] 21.2 Custom actions para radicación
+- [ ] 26.2 Custom actions para radicación
   - Implementar actions:
     - `GenerateIDAction` (generar numero radicado formato RAD-YYYY-NNNNNN)
     - `NotifyAction` (enviar email/notificación)
@@ -1055,21 +1541,21 @@
   - Registrar actions en action registry
   - _Requirements: Custom Actions_
 
-- [ ] 21.3 Custom validators
+- [ ] 26.3 Custom validators
   - Implementar validators:
     - `RequiredFieldsValidator` (verificar campos requeridos)
     - `CustomValidator` (lógica de negocio específica)
   - Registrar validators en validator registry
   - _Requirements: Custom Validators_
 
-- [ ] 21.4 Seed script
+- [ ] 26.4 Seed script
   - Crear `scripts/seed.sh`:
     - Cargar workflow radicación a DB
     - Crear usuarios de ejemplo
     - Crear instancia de prueba
   - _Requirements: Database Seeding_
 
-- [ ]* 21.5 E2E test flujo completo
+- [ ]* 26.5 E2E test flujo completo
   - Crear `test/e2e/radicacion_test.go`:
     - `TestRadicacionWorkflow_CompleteFlow_E2E`:
       - 1. Start containers (PostgreSQL, Redis, RabbitMQ)
@@ -1093,9 +1579,9 @@
   - Build tag `//go:build e2e`
   - _Requirements: E2E Testing, Complete Workflow_
 
-### Fase 22: Performance Testing
+### Fase 27: Performance Testing
 
-- [ ] 22.1 k6 load test
+- [ ] 27.1 k6 load test
   - Crear `test/performance/load_test.js`:
     - Scenarios:
       - Ramp up to 50 users (1 min)
@@ -1113,7 +1599,7 @@
       - Query instances
   - _Requirements: Load Testing, Performance Benchmarks_
 
-- [ ] 22.2 Benchmarks Go
+- [ ] 27.2 Benchmarks Go
   - Crear benchmarks:
     - `BenchmarkInstance_Transition`
     - `BenchmarkHybridRepository_FindByID`
@@ -1121,52 +1607,57 @@
   - Ejecutar con `go test -bench=. -benchmem`
   - _Requirements: Benchmarking_
 
-- [ ]* 22.3 Performance tuning
+- [ ]* 27.3 Performance tuning
   - Ejecutar load tests
   - Identificar bottlenecks con profiling (pprof)
   - Optimizar queries, índices, cache
   - Objetivo: 10K+ transitions/second aggregate
   - _Requirements: Performance Optimization_
 
-### Fase 23: Documentación
+### Fase 28: Documentación
 
-- [ ] 23.1 README principal
+- [ ] 28.1 README principal
   - Crear `README.md` completo:
     - Descripción del proyecto
-    - Features principales
+    - Features principales (incluir R17-R23)
     - Quick start (docker-compose up)
     - API examples (cURL)
     - Architecture diagram (mermaid)
     - Links a docs/
   - _Requirements: Documentation_
 
-- [ ] 23.2 API documentation (OpenAPI)
+- [ ] 28.2 API documentation (OpenAPI)
   - Crear `internal/infrastructure/http/openapi/spec.yaml`:
     - OpenAPI 3.0 spec completo
-    - Todos los endpoints
+    - Todos los endpoints (incluir nuevos de R18-R22)
     - Request/response schemas
     - Examples
     - Error codes
   - Integrar Swagger UI en `/docs`
   - _Requirements: API Documentation, OpenAPI_
 
-- [ ] 23.3 Architecture Decision Records
+- [ ] 28.3 Architecture Decision Records
   - Crear `docs/architecture/adr/`:
     - `001-hexagonal-architecture.md`
     - `002-redis-postgres-hybrid.md`
     - `003-optimistic-locking.md`
     - `004-event-driven-webhooks.md`
+    - `005-advanced-guards.md` (R20)
+    - `006-workflow-templates.md` (R21)
+    - `007-metadata-validation.md` (R23)
   - Template ADR: Context, Decision, Consequences
   - _Requirements: ADR, Architecture Documentation_
 
-- [ ] 23.4 Workflow examples documentation
+- [ ] 28.4 Workflow examples documentation
   - Crear `docs/workflows/`:
     - `radicacion.md` (explicación paso a paso)
     - `custom-workflows.md` (guía para crear workflows)
-    - `yaml-reference.md` (referencia completa de sintaxis)
+    - `yaml-reference.md` (referencia completa de sintaxis con R17, R20, R23)
+    - `guards-reference.md` (guía completa de guards - R20)
+    - `templates-guide.md` (uso de plantillas - R21)
   - _Requirements: User Documentation_
 
-- [ ] 23.5 Deployment guide
+- [ ] 28.5 Deployment guide
   - Crear `docs/deployment/`:
     - `local-development.md` (docker-compose)
     - `kubernetes.md` (k8s deployment)
@@ -1174,9 +1665,9 @@
     - `monitoring.md` (Prometheus + Grafana)
   - _Requirements: Operations Documentation_
 
-### Fase 24: CI/CD
+### Fase 29: CI/CD
 
-- [ ] 24.1 GitHub Actions - Tests
+- [ ] 29.1 GitHub Actions - Tests
   - Crear `.github/workflows/test.yml`:
     - Trigger: push, pull_request
     - Jobs:
@@ -1186,7 +1677,7 @@
     - Upload coverage to codecov
   - _Requirements: CI, Automated Testing_
 
-- [ ] 24.2 GitHub Actions - Build & Push
+- [ ] 29.2 GitHub Actions - Build & Push
   - Crear `.github/workflows/build.yml`:
     - Trigger: push to main, tags
     - Jobs:
@@ -1195,7 +1686,7 @@
       - Tag con version desde git tag
   - _Requirements: CI, Docker Registry_
 
-- [ ] 24.3 GitHub Actions - Security
+- [ ] 29.3 GitHub Actions - Security
   - Crear `.github/workflows/security.yml`:
     - Dependabot alerts
     - Trivy security scan (Docker image)
@@ -1203,7 +1694,7 @@
     - SAST checks
   - _Requirements: Security Scanning_
 
-- [ ] 24.4 Pre-commit hooks (opcional)
+- [ ] 29.4 Pre-commit hooks (opcional)
   - Crear `.pre-commit-config.yaml`:
     - go fmt
     - go vet
@@ -1211,50 +1702,55 @@
   - Setup con pre-commit framework
   - _Requirements: Code Quality_
 
-### Fase 25: Final Review y Polish
+### Fase 30: Final Review y Polish
 
-- [ ]* 25.1 Code review completo
+- [ ]* 30.1 Code review completo
   - Revisar SOLID principles en cada layer
   - Verificar separation of concerns
   - Eliminar código duplicado
   - Verificar error handling consistente
+  - Revisar implementaciones de R17-R23
   - _Requirements: Code Quality, Clean Code_
 
-- [ ]* 25.2 Test coverage verification
+- [ ]* 30.2 Test coverage verification
   - Ejecutar `make test-coverage`
   - Verificar >80% coverage total
   - Verificar >90% coverage en domain layer
+  - Verificar coverage en nuevos componentes (Escalation, Guards, Templates, Import/Export)
   - Identificar y testear edge cases faltantes
   - _Requirements: Test Coverage_
 
-- [ ]* 25.3 Performance verification
+- [ ]* 30.3 Performance verification
   - Ejecutar k6 load tests
   - Verificar thresholds se cumplen:
     - p95 < 500ms
     - p99 < 1s
     - Error rate < 1%
   - Verificar cache hit rate >90%
+  - Testear impacto de guards en performance
   - _Requirements: Performance Benchmarks_
 
-- [ ]* 25.4 Security review
+- [ ]* 30.4 Security review
   - Verificar no secrets hardcodeados
-  - Verificar input validation en todos los endpoints
+  - Verificar input validation en todos los endpoints (incluir nuevos)
   - Verificar SQL injection protection (prepared statements)
   - Verificar HMAC signatures en webhooks
+  - Revisar guards no introducen vulnerabilidades
   - Revisar dependency vulnerabilities
   - _Requirements: Security_
 
-- [ ]* 25.5 Documentation review
-  - Verificar README está completo y actualizado
+- [ ]* 30.5 Documentation review
+  - Verificar README está completo y actualizado con R17-R23
   - Verificar API docs (OpenAPI) están sincronizados
-  - Verificar ejemplos funcionan
+  - Verificar ejemplos funcionan (incluir nuevos features)
+  - Verificar documentación de guards, templates, import/export
   - Spell check
   - _Requirements: Documentation Quality_
 
-- [ ] 25.6 Release preparation
-  - Crear CHANGELOG.md con v1.0.0
-  - Tag release en git: `git tag v1.0.0`
-  - Generar release notes
+- [ ] 30.6 Release preparation
+  - Crear CHANGELOG.md con v2.0.0 (incluir R17-R23)
+  - Tag release en git: `git tag v2.0.0`
+  - Generar release notes detallando nuevas características
   - Publicar Docker image
   - Anuncio/comunicación
   - _Requirements: Release Management_
@@ -1274,16 +1770,31 @@
 | 13 | Infrastructure - HTTP API | 3-4 días |
 | 14 | Infrastructure - DI | 1 día |
 | 15 | Infrastructure - Observability | 2 días |
-| 16-18 | Features Avanzados | 3-4 días |
-| 19 | CLI Entrypoints | 1 día |
-| 20 | Deployment | 2 días |
-| 21 | Ejemplo Radicación | 2-3 días |
-| 22 | Performance Testing | 2 días |
-| 23 | Documentación | 2-3 días |
-| 24 | CI/CD | 1-2 días |
-| 25 | Review y Polish | 2-3 días |
+| 16-18 | Features Avanzados (Subprocesos, Actores, Timers) | 3-4 días |
+| **19** | **Escalamientos Manuales (R18)** | **3-4 días** |
+| **20** | **Reclasificación de Instancias (R19)** | **2 días** |
+| **21** | **Guards de Transición Avanzados (R20)** | **3-4 días** |
+| **22** | **Plantillas de Workflows (R21)** | **2-3 días** |
+| **23** | **Import/Export de Workflows (R22)** | **3 días** |
+| 24 | CLI Entrypoints | 1 día |
+| 25 | Deployment | 2 días |
+| 26 | Ejemplo Radicación | 2-3 días |
+| 27 | Performance Testing | 2 días |
+| 28 | Documentación | 3-4 días |
+| 29 | CI/CD | 1-2 días |
+| 30 | Review y Polish | 3-4 días |
 
-**Total Estimado: 8-10 semanas**
+**Total Estimado: 11-14 semanas** (incremento de 3-4 semanas debido a R17-R23)
+
+### Desglose de Nuevos Requerimientos
+
+**R17 (Subestados)**: Integrado en Fases 4, 6 (migraciones), sin fase dedicada (+1 día distribuido)
+**R18 (Escalamientos)**: Fase 19 dedicada (3-4 días) - Aggregate completo, use cases, handlers, tests
+**R19 (Reclasificación)**: Fase 20 dedicada (2 días) - Use case, validaciones, configuración
+**R20 (Guards Avanzados)**: Fase 21 dedicada (3-4 días) - 15+ guards, registry, evaluación, tests
+**R21 (Plantillas)**: Fase 22 dedicada (2-3 días) - Clonación, overrides, dot notation
+**R22 (Import/Export)**: Fase 23 dedicada (3 días) - Serialización, versiones, bulk operations
+**R23 (Metadata)**: Integrado en Fases 4, 6 (migraciones), sin fase dedicada (+0.5 días distribuido)
 
 ---
 
@@ -1298,5 +1809,24 @@
 
 ---
 
-**Última actualización**: 2025-01-15
-**Versión del plan**: 1.0
+**Última actualización**: 2025-11-10
+**Versión del plan**: 2.0
+
+## Cambios en v2.0
+
+Esta versión del plan incorpora los siguientes nuevos requerimientos:
+
+- **R17**: Sistema de Subestados Jerárquicos (integrado en Fases 4, 6)
+- **R18**: Escalamientos Manuales a Departamentos Externos (Fase 19 nueva)
+- **R19**: Reclasificación de Instancias sin Cambio de Estado (Fase 20 nueva)
+- **R20**: Guards de Transición Avanzados con Lógica Compleja (Fase 21 nueva)
+- **R21**: Plantillas de Workflows Reutilizables (Fase 22 nueva)
+- **R22**: Import/Export de Workflows con Versionado (Fase 23 nueva)
+- **R23**: Metadata Extendida en Transiciones con Validación (integrado en Fases 4, 6)
+
+**Incremento de esfuerzo**: +3-4 semanas (de 8-10 a 11-14 semanas)
+**Nuevas tablas**: 1 (workflow_escalations)
+**Nuevos campos**: 9 distribuidos en 3 tablas existentes
+**Nuevos endpoints**: ~20+
+**Nuevos aggregates/value objects**: 3+
+**Nuevos use cases**: 10+
