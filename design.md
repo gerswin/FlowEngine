@@ -9,11 +9,18 @@
 - ✅ **Persistencia híbrida** (Redis + PostgreSQL) para alto rendimiento
 - ✅ **Múltiples instancias** de workflows ejecutándose en paralelo
 - ✅ **Subprocesos jerárquicos** (procesos padre-hijo)
-- ✅ **Workflows configurables** vía YAML/JSON
+- ✅ **Workflows configurables** vía YAML/JSON con hot-reload
 - ✅ **REST API** completa para gestión de workflows
 - ✅ **Eventos externos** (webhooks, message queues)
 - ✅ **Sistema de actores y roles** con permisos granulares
 - ✅ **Timers y escalamientos** automáticos
+- ✅ **Subestados jerárquicos** para tracking detallado (R17)
+- ✅ **Escalamientos manuales** a departamentos externos (R18)
+- ✅ **Reclasificación de instancias** sin cambio de estado (R19)
+- ✅ **Guards de transición avanzados** con lógica customizable (R20)
+- ✅ **Plantillas de workflows** reutilizables (R21)
+- ✅ **Import/Export** de workflows en YAML/JSON (R22)
+- ✅ **Metadata extendida** en transiciones con validación (R23)
 - ✅ **Arquitectura hexagonal** con código limpio y testeable
 
 ### 1.2 Tecnologías Principales
@@ -247,9 +254,11 @@ sequenceDiagram
 ```mermaid
 erDiagram
     WORKFLOWS ||--o{ WORKFLOW_INSTANCES : defines
+    WORKFLOWS ||--o{ WORKFLOWS : "template-derived"
     WORKFLOW_INSTANCES ||--o{ WORKFLOW_INSTANCES : "parent-child"
     WORKFLOW_INSTANCES ||--o{ WORKFLOW_TRANSITIONS : has
     WORKFLOW_INSTANCES ||--o{ WORKFLOW_TIMERS : has
+    WORKFLOW_INSTANCES ||--o{ WORKFLOW_ESCALATIONS : has
     WORKFLOWS ||--o{ WEBHOOKS : configures
 
     WORKFLOWS {
@@ -258,6 +267,8 @@ erDiagram
         text description
         varchar version
         jsonb config
+        boolean is_template
+        uuid template_id FK
         timestamp created_at
         timestamp updated_at
         timestamp deleted_at
@@ -269,6 +280,8 @@ erDiagram
         uuid parent_id FK
         varchar current_state
         varchar previous_state
+        varchar current_sub_state
+        varchar previous_sub_state
         bigint version
         varchar status
         jsonb data
@@ -289,9 +302,14 @@ erDiagram
         varchar event
         varchar from_state
         varchar to_state
+        varchar from_sub_state
+        varchar to_sub_state
         varchar actor
         varchar actor_role
         jsonb data
+        text reason
+        text feedback
+        jsonb metadata
         integer duration_ms
         timestamp created_at
     }
@@ -304,6 +322,21 @@ erDiagram
         timestamp created_at
         timestamp expires_at
         timestamp fired_at
+    }
+
+    WORKFLOW_ESCALATIONS {
+        uuid id PK
+        uuid instance_id FK
+        varchar department_id
+        text reason
+        varchar escalated_by
+        timestamp escalated_at
+        varchar status
+        text response
+        varchar responded_by
+        timestamp responded_at
+        varchar closed_by
+        timestamp closed_at
     }
 
     WEBHOOKS {
@@ -384,28 +417,80 @@ func (w *Workflow) FindEvent(name string) (Event, error)
 **Interfaz Pública**:
 ```go
 type Instance struct {
-    id            ID
-    workflowID    workflow.ID
-    currentState  workflow.State
-    version       Version
-    status        Status
-    data          Data
-    variables     Variables
-    history       []Transition
-    domainEvents  []event.DomainEvent
+    id               ID
+    workflowID       workflow.ID
+    currentState     workflow.State
+    currentSubState  *workflow.SubState      // R17: Subestados
+    previousSubState *workflow.SubState      // R17: Subestados
+    version          Version
+    status           Status
+    data             Data
+    variables        Variables
+    history          []Transition
+    domainEvents     []event.DomainEvent
 }
 
 func NewInstance(workflowID workflow.ID, initialState workflow.State, data Data) (*Instance, error)
 func (i *Instance) Transition(ctx context.Context, wf *workflow.Workflow, eventName string, actorID string) error
+func (i *Instance) TransitionWithMetadata(ctx context.Context, wf *workflow.Workflow, eventName string, actorID string, reason, feedback string, metadata map[string]interface{}) error  // R23
 func (i *Instance) Pause() error
 func (i *Instance) Resume() error
 func (i *Instance) Cancel() error
 func (i *Instance) SetVariable(key string, value interface{})
 func (i *Instance) GetVariable(key string) (interface{}, bool)
 func (i *Instance) DomainEvents() []event.DomainEvent
+
+// R17: Métodos de subestados
+func (i *Instance) TransitionSubState(ctx context.Context, wf *workflow.Workflow, newSubState workflow.SubState) error
+func (i *Instance) CurrentSubState() *workflow.SubState
+func (i *Instance) PreviousSubState() *workflow.SubState
+
+// R19: Reclasificación
+func (i *Instance) Reclassify(newType string, reason string, actor string) error
 ```
 
-#### 3.1.3 Value Objects
+#### 3.1.3 Escalation Aggregate (R18)
+
+**Responsabilidades**:
+- Gestionar el ciclo de vida de un escalamiento
+- Validar transiciones de estado
+- Registrar respuestas y cierres
+- Generar eventos de dominio
+
+**Invariantes**:
+- Solo escalamientos "pending" pueden ser cancelados
+- Una vez cerrado, no se puede reabrir
+- Respuesta es obligatoria para estado "responded"
+- DepartmentId debe ser válido
+
+**Interfaz Pública**:
+```go
+type Escalation struct {
+    id           ID
+    instanceID   instance.ID
+    departmentID DepartmentID
+    reason       string
+    escalatedBy  string
+    escalatedAt  time.Time
+    status       EscalationStatus
+    response     *string
+    respondedBy  *string
+    respondedAt  *time.Time
+    closedBy     *string
+    closedAt     *time.Time
+    domainEvents []event.DomainEvent
+}
+
+func NewEscalation(instanceID instance.ID, departmentID DepartmentID, reason string, escalatedBy string) (*Escalation, error)
+func (e *Escalation) Reply(response string, respondedBy string) error
+func (e *Escalation) Close(closedBy string) error
+func (e *Escalation) Cancel() error
+func (e *Escalation) Status() EscalationStatus
+func (e *Escalation) CanCancel() bool
+func (e *Escalation) DomainEvents() []event.DomainEvent
+```
+
+#### 3.1.4 Value Objects
 
 **State**:
 ```go
@@ -448,6 +533,51 @@ func NewDataFromMap(m map[string]interface{}) Data
 func (d Data) Get(key string) (interface{}, bool)
 func (d Data) Set(key string, value interface{})
 func (d Data) ToMap() map[string]interface{}
+```
+
+**SubState** (R17 - subestados):
+```go
+type SubState struct {
+    id          string
+    name        string
+    description string
+}
+
+func NewSubState(id, name string) (SubState, error)
+func (s SubState) ID() string
+func (s SubState) Name() string
+func (s SubState) Equals(other SubState) bool
+func (s SubState) Validate() error
+```
+
+**TransitionMetadata** (R23 - metadata extendida):
+```go
+type TransitionMetadata struct {
+    reason   string
+    feedback string
+    metadata map[string]interface{}
+}
+
+func NewTransitionMetadata(reason, feedback string, metadata map[string]interface{}) TransitionMetadata
+func (tm TransitionMetadata) Reason() string
+func (tm TransitionMetadata) Feedback() string
+func (tm TransitionMetadata) Metadata() map[string]interface{}
+func (tm TransitionMetadata) Validate(schema *MetadataSchema) error
+```
+
+**EscalationStatus** (R18 - escalamientos):
+```go
+type EscalationStatus string
+
+const (
+    EscalationPending   EscalationStatus = "pending"
+    EscalationResponded EscalationStatus = "responded"
+    EscalationClosed    EscalationStatus = "closed"
+    EscalationCanceled  EscalationStatus = "canceled"
+)
+
+func (es EscalationStatus) IsValid() bool
+func (es EscalationStatus) CanTransitionTo(newStatus EscalationStatus) bool
 ```
 
 ### 3.2 Application Layer (Casos de Uso)
@@ -540,6 +670,129 @@ type QueryInstancesResult struct {
 }
 
 func (uc *QueryInstancesUseCase) Execute(ctx context.Context, query QueryInstancesQuery) (*QueryInstancesResult, error)
+```
+
+#### 3.2.4 EscalateInstanceUseCase (R18)
+
+```go
+type EscalateInstanceCommand struct {
+    InstanceID   string
+    DepartmentID string
+    Reason       string
+    ActorID      string
+}
+
+type EscalateInstanceResult struct {
+    EscalationID string
+    InstanceID   string
+    DepartmentID string
+    Status       string
+    EscalatedAt  time.Time
+}
+
+func (uc *EscalateInstanceUseCase) Execute(ctx context.Context, cmd EscalateInstanceCommand) (*EscalateInstanceResult, error)
+// 1. Validar que la instancia exista y permita escalamientos
+// 2. Validar permisos del actor
+// 3. Crear agregado Escalation
+// 4. Cambiar subestado de la instancia
+// 5. Persistir escalamiento y actualizar instancia
+// 6. Publicar evento DocumentEscalated
+```
+
+#### 3.2.5 ReplyEscalationUseCase (R18)
+
+```go
+type ReplyEscalationCommand struct {
+    EscalationID string
+    Response     string
+    RespondedBy  string
+}
+
+type ReplyEscalationResult struct {
+    EscalationID string
+    Status       string
+    RespondedAt  time.Time
+}
+
+func (uc *ReplyEscalationUseCase) Execute(ctx context.Context, cmd ReplyEscalationCommand) (*ReplyEscalationResult, error)
+```
+
+#### 3.2.6 ReclassifyInstanceUseCase (R19)
+
+```go
+type ReclassifyInstanceCommand struct {
+    InstanceID string
+    NewType    string
+    Reason     string
+    ActorID    string
+}
+
+type ReclassifyInstanceResult struct {
+    InstanceID   string
+    FromType     string
+    ToType       string
+    CurrentState string
+    Version      int64
+}
+
+func (uc *ReclassifyInstanceUseCase) Execute(ctx context.Context, cmd ReclassifyInstanceCommand) (*ReclassifyInstanceResult, error)
+// 1. Validar que la instancia permita reclasificación
+// 2. Validar permisos del actor (requires_senior?)
+// 3. Ejecutar reclasificación en el agregado
+// 4. Persistir cambios
+// 5. Publicar evento DocumentReclassified
+```
+
+#### 3.2.7 CloneWorkflowFromTemplateUseCase (R21)
+
+```go
+type CloneWorkflowCommand struct {
+    TemplateID  string
+    NewID       *string
+    Name        string
+    Description string
+    Overrides   map[string]interface{}
+}
+
+type CloneWorkflowResult struct {
+    WorkflowID string
+    Name       string
+    TemplateID string
+}
+
+func (uc *CloneWorkflowFromTemplateUseCase) Execute(ctx context.Context, cmd CloneWorkflowCommand) (*CloneWorkflowResult, error)
+// 1. Cargar template desde repositorio
+// 2. Validar que sea template
+// 3. Clonar configuración
+// 4. Aplicar overrides
+// 5. Validar workflow resultante
+// 6. Persistir nuevo workflow
+```
+
+#### 3.2.8 ImportWorkflowUseCase (R22)
+
+```go
+type ImportWorkflowCommand struct {
+    Content       []byte
+    Format        string // "yaml" | "json"
+    Mode          string // "create" | "update" | "force"
+    GenerateNewID bool
+}
+
+type ImportWorkflowResult struct {
+    WorkflowID string
+    Name       string
+    Version    string
+    Created    bool
+}
+
+func (uc *ImportWorkflowUseCase) Execute(ctx context.Context, cmd ImportWorkflowCommand) (*ImportWorkflowResult, error)
+// 1. Parsear YAML/JSON
+// 2. Validar schema version y compatibilidad
+// 3. Validar checksum
+// 4. Validar workflow configuration
+// 5. Verificar si existe (según mode)
+// 6. Persistir workflow
 ```
 
 ### 3.3 Infrastructure Layer (Adaptadores)
@@ -882,7 +1135,7 @@ func (l *YAMLWorkflowLoader) LoadFromFile(path string) (*workflow.Workflow, erro
 }
 
 func (l *YAMLWorkflowLoader) buildWorkflow(config *WorkflowConfig) (*workflow.Workflow, error) {
-    // Construir states
+    // Construir states (R17: con subestados)
     states := []workflow.State{}
     for _, sc := range config.Workflow.States {
         state, err := workflow.NewState(sc.ID, sc.Name)
@@ -899,18 +1152,55 @@ func (l *YAMLWorkflowLoader) buildWorkflow(config *WorkflowConfig) (*workflow.Wo
             state = state.AsFinal()
         }
 
+        // R17: Agregar subestados si existen
+        if len(sc.Substates) > 0 {
+            substates := []workflow.SubState{}
+            for _, ssc := range sc.Substates {
+                substate, _ := workflow.NewSubState(ssc.ID, ssc.Name)
+                substates = append(substates, substate)
+            }
+            state = state.WithSubstates(substates)
+        }
+
+        // R18: Configurar escalamientos
+        if sc.AllowEscalation {
+            state = state.WithEscalationEnabled(sc.EscalationGuard)
+        }
+
         states = append(states, state)
     }
 
-    // Construir events
+    // Construir events (R20: con guards avanzados, R23: con metadata schema)
     events := []workflow.Event{}
     for _, ec := range config.Workflow.Events {
         event := workflow.NewEvent(ec.Name, ec.From, ec.To)
+
+        // R20: Configurar guards
+        for _, guardConfig := range ec.Guards {
+            guard, err := l.guardRegistry.Get(guardConfig)
+            if err != nil {
+                return nil, err
+            }
+            event = event.WithGuard(guard)
+        }
+
+        // R23: Configurar metadata schema
+        if ec.RequireReason {
+            event = event.WithRequiredReason()
+        }
+        if ec.RequireFeedback {
+            event = event.WithRequiredFeedback()
+        }
+        if ec.MetadataSchema != nil {
+            schema, _ := l.buildMetadataSchema(ec.MetadataSchema)
+            event = event.WithMetadataSchema(schema)
+        }
+
         // ... configurar validators, actions, etc
         events = append(events, event)
     }
 
-    // Crear workflow
+    // Crear workflow (R21: con soporte para templates)
     initialState := states[0]
     wf, err := workflow.NewWorkflow(
         workflow.Name(config.Workflow.Name),
@@ -926,8 +1216,203 @@ func (l *YAMLWorkflowLoader) buildWorkflow(config *WorkflowConfig) (*workflow.Wo
         wf.AddEvent(event)
     }
 
+    // R19: Configurar reclasificación
+    if config.Reclassification != nil && config.Reclassification.Enabled {
+        wf.EnableReclassification(config.Reclassification)
+    }
+
     return wf, nil
 }
+```
+
+#### 3.3.7 Ejemplo Completo de Configuración YAML (Con Nuevas Características)
+
+```yaml
+# config/workflows/person_document_flow.yaml
+workflow:
+  id: person_document_flow
+  name: "Flujo de Documentos de Persona"
+  version: "2.0"
+  description: "Workflow con subestados, escalamientos, guards avanzados y metadata"
+
+  # R17: Estados con subestados
+  states:
+    - id: filed
+      name: "Radicado"
+      timeout: "24h"
+      on_timeout: "auto_escalate"
+
+    - id: assigned
+      name: "Asignado"
+      timeout: "12h"
+
+    - id: in_progress
+      name: "En Progreso"
+      timeout: "72h"
+      # R17: Subestados
+      substates:
+        - id: working
+          name: "Trabajando"
+          description: "Gestionador trabajando normalmente"
+        - id: escalated_awaiting_response
+          name: "Escalado - Esperando respuesta"
+          description: "Escalado a departamento externo"
+        - id: additional_info_required
+          name: "Información Adicional Requerida"
+          description: "Esperando más información del solicitante"
+      # R18: Permitir escalamientos
+      allow_escalation: true
+      escalation_guard: has_role:gestionador
+
+    - id: in_review
+      name: "En Revisión"
+      timeout: "24h"
+      substates:
+        - id: initial_review
+          name: "Revisión Inicial"
+        - id: senior_review
+          name: "Revisión Senior"
+
+    - id: approved
+      name: "Aprobado"
+      final: true
+
+    - id: rejected
+      name: "Rechazado"
+      final: true
+
+  # R20: Eventos con guards avanzados y R23: metadata schema
+  events:
+    - name: assign_document
+      from: [filed]
+      to: assigned
+      # R20: Guards avanzados
+      guards:
+        - has_role:asignador
+        - field_not_empty:data.document_type
+        - instance_age_less_than:24h
+
+    - name: start_processing
+      from: [assigned]
+      to: in_progress
+      guards:
+        - has_role:gestionador
+        - is_assigned_to_actor
+
+    - name: request_additional_info
+      from: [in_progress]
+      to: in_progress  # Reentrada al mismo estado
+      # R23: Metadata requerida
+      require_reason: true
+      require_feedback: false
+      metadata_schema:
+        required:
+          reason: string
+          requested_fields:
+            type: array
+            items: string
+        optional:
+          contact_method:
+            type: enum
+            values: [email, phone, portal]
+
+    - name: escalate
+      from: [in_progress]
+      to: in_progress  # Permanece en mismo estado, cambia subestado
+      # R23: Metadata extendida
+      require_reason: true
+      require_feedback: false
+      metadata_schema:
+        required:
+          reason: string
+          department_id: string
+        optional:
+          urgency:
+            type: enum
+            values: [low, medium, high, critical]
+          estimated_response_days: number
+
+    - name: submit_for_review
+      from: [in_progress]
+      to: in_review
+      guards:
+        - has_role:gestionador
+        - field_not_empty:data.completed_work
+        - instance_age_more_than:1h  # Al menos 1 hora trabajando
+
+    - name: approve
+      from: [in_review]
+      to: approved
+      guards:
+        - has_role:revisor
+        - or:
+            - has_role:senior_revisor
+            - field_equals:data.risk_level:low
+      # R23: Metadata
+      require_feedback: true
+      metadata_schema:
+        required:
+          feedback: string
+          approval_notes: string
+        optional:
+          quality_score:
+            type: number
+            min: 1
+            max: 10
+
+    - name: reject
+      from: [in_review]
+      to: in_progress  # Vuelve a estado previo
+      # R23: Metadata obligatoria
+      require_reason: true
+      require_feedback: true
+      metadata_schema:
+        required:
+          reason: string
+          feedback: string
+          correction_notes: string
+        optional:
+          priority:
+            type: enum
+            values: [low, medium, high]
+
+    - name: reclassify
+      from: [in_progress, in_review]
+      to: in_progress  # Loop/stay
+      # R19: Reclasificación
+      guards:
+        - has_role:gestionador_senior
+      require_reason: true
+      metadata_schema:
+        required:
+          reason: string
+          from_type: string
+          to_type: string
+
+# R19: Configuración de reclasificación
+reclassification:
+  enabled: true
+  allowed_types:
+    - PQRD
+    - Control
+    - Queja
+    - Reclamo
+    - Sugerencia
+    - Felicitación
+  allowed_from_states:
+    - in_progress
+    - in_review
+  required_role: gestionador
+  requires_senior: true
+
+# R20: Guards personalizados (ejemplo de cómo se registrarían)
+custom_guards:
+  - name: has_attachments_with_size
+    type: custom
+    implementation: internal.guards.HasAttachmentsWithSize
+    config:
+      min_size_kb: 10
+      max_size_kb: 5120
 ```
 
 ---
@@ -1000,15 +1485,62 @@ func (e InstanceCreated) AggregateID() string { return e.instanceID }
 func (e InstanceCreated) OccurredAt() time.Time { return e.occurredAt }
 
 type StateChanged struct {
+    instanceID   string
+    fromState    string
+    toState      string
+    fromSubState *string  // R17
+    toSubState   *string  // R17
+    event        string
+    actor        string
+    reason       *string  // R23
+    feedback     *string  // R23
+    occurredAt   time.Time
+}
+
+func (e StateChanged) Type() string { return "state.changed" }
+
+// R18: Eventos de escalamientos
+type DocumentEscalated struct {
+    instanceID   string
+    escalationID string
+    departmentID string
+    escalatedBy  string
+    reason       string
+    occurredAt   time.Time
+}
+
+func (e DocumentEscalated) Type() string { return "document.escalated" }
+
+type EscalationReplied struct {
+    escalationID string
+    instanceID   string
+    respondedBy  string
+    response     string
+    occurredAt   time.Time
+}
+
+func (e EscalationReplied) Type() string { return "escalation.replied" }
+
+type EscalationClosed struct {
+    escalationID string
+    instanceID   string
+    closedBy     string
+    occurredAt   time.Time
+}
+
+func (e EscalationClosed) Type() string { return "escalation.closed" }
+
+// R19: Evento de reclasificación
+type DocumentReclassified struct {
     instanceID string
-    fromState  string
-    toState    string
-    event      string
+    fromType   string
+    toType     string
+    reason     string
     actor      string
     occurredAt time.Time
 }
 
-func (e StateChanged) Type() string { return "state.changed" }
+func (e DocumentReclassified) Type() string { return "document.reclassified" }
 ```
 
 ### 4.3 Locker Port
@@ -1053,12 +1585,18 @@ type Logger interface {
 
 | Método | Endpoint | Descripción | Request | Response |
 |--------|----------|-------------|---------|----------|
-| GET | `/api/v1/workflows` | Listar workflows | - | `WorkflowListResponse` |
+| GET | `/api/v1/workflows` | Listar workflows | Query: `is_template`, `template_id` | `WorkflowListResponse` |
 | POST | `/api/v1/workflows` | Crear workflow | `CreateWorkflowRequest` | `WorkflowResponse` |
 | GET | `/api/v1/workflows/:id` | Obtener workflow | - | `WorkflowResponse` |
 | PUT | `/api/v1/workflows/:id` | Actualizar workflow | `UpdateWorkflowRequest` | `WorkflowResponse` |
-| DELETE | `/api/v1/workflows/:id` | Eliminar workflow | - | `204 No Content` |
+| DELETE | `/api/v1/workflows/:id` | Eliminar workflow | Query: `force` | `204 No Content` |
 | GET | `/api/v1/workflows/:id/visualize` | Visualizar (mermaid) | - | `VisualizationResponse` |
+| POST | `/api/v1/workflows/from-template` | Clonar desde plantilla (R21) | `CloneFromTemplateRequest` | `WorkflowResponse` |
+| GET | `/api/v1/workflows/:id/export` | Exportar workflow (R22) | Query: `format=yaml\|json` | File download |
+| POST | `/api/v1/workflows/export-batch` | Exportar múltiples (R22) | `ExportBatchRequest` | ZIP download |
+| GET | `/api/v1/workflows/export-all` | Exportar todos (R22) | - | ZIP download |
+| POST | `/api/v1/workflows/import` | Importar workflow (R22) | Multipart/JSON | `WorkflowResponse` |
+| POST | `/api/v1/workflows/import-bulk` | Importar bulk (R22) | ZIP file | `ImportBulkResponse` |
 
 #### Instances
 
@@ -1068,18 +1606,33 @@ type Logger interface {
 | GET | `/api/v1/instances` | Listar instancias | Query params | `InstanceListResponse` |
 | GET | `/api/v1/instances/:id` | Obtener instancia | - | `InstanceResponse` |
 | POST | `/api/v1/instances/:id/events` | Trigger evento | `TriggerEventRequest` | `TransitionResponse` |
-| GET | `/api/v1/instances/:id/history` | Ver historial | - | `HistoryResponse` |
+| GET | `/api/v1/instances/:id/history` | Ver historial | Query: `event`, `has_feedback` | `HistoryResponse` |
 | POST | `/api/v1/instances/:id/pause` | Pausar instancia | - | `InstanceResponse` |
 | POST | `/api/v1/instances/:id/resume` | Reanudar instancia | - | `InstanceResponse` |
 | DELETE | `/api/v1/instances/:id` | Cancelar instancia | - | `204 No Content` |
+| POST | `/api/v1/instances/:id/escalate` | Escalar a departamento (R18) | `EscalateRequest` | `EscalationResponse` |
+| POST | `/api/v1/instances/:id/escalation-reply` | Responder escalamiento (R18) | `EscalationReplyRequest` | `EscalationResponse` |
+| GET | `/api/v1/instances/:id/escalations` | Listar escalamientos (R18) | - | `EscalationListResponse` |
+| POST | `/api/v1/instances/:id/reclassify` | Reclasificar instancia (R19) | `ReclassifyRequest` | `ReclassificationResponse` |
+| GET | `/api/v1/instances/:id/reclassifications` | Historial reclasif. (R19) | - | `ReclassificationListResponse` |
+
+#### Escalations (R18)
+
+| Método | Endpoint | Descripción | Request | Response |
+|--------|----------|-------------|---------|----------|
+| GET | `/api/v1/escalations/:id` | Obtener escalamiento | - | `EscalationResponse` |
+| POST | `/api/v1/escalations/:id/close` | Cerrar escalamiento | - | `EscalationResponse` |
+| DELETE | `/api/v1/escalations/:id` | Cancelar escalamiento | - | `204 No Content` |
+| GET | `/api/v1/queries/escalations` | Query escalamientos | Query: `department_id`, `status` | `EscalationListResponse` |
 
 #### Queries
 
 | Método | Endpoint | Descripción | Request | Response |
 |--------|----------|-------------|---------|----------|
-| POST | `/api/v1/queries/instances` | Query avanzado | `QueryRequest` | `QueryResponse` |
+| POST | `/api/v1/queries/instances` | Query avanzado | `QueryRequest` (con `sub_states`) | `QueryResponse` |
 | GET | `/api/v1/queries/statistics` | Estadísticas | Query params | `StatisticsResponse` |
 | GET | `/api/v1/queries/actors/:id/workload` | Carga de trabajo | - | `WorkloadResponse` |
+| POST | `/api/v1/queries/transitions` | Query transiciones (R23) | `TransitionsQueryRequest` | `TransitionsQueryResponse` |
 
 ### 4.6 Request/Response DTOs
 
@@ -1094,25 +1647,30 @@ type CreateInstanceRequest struct {
 
 // InstanceResponse
 type InstanceResponse struct {
-    ID            string                 `json:"id"`
-    WorkflowID    string                 `json:"workflow_id"`
-    CurrentState  string                 `json:"current_state"`
-    PreviousState *string                `json:"previous_state,omitempty"`
-    Status        string                 `json:"status"`
-    Version       int64                  `json:"version"`
-    Data          map[string]interface{} `json:"data"`
-    Variables     map[string]interface{} `json:"variables"`
-    CurrentActor  string                 `json:"current_actor,omitempty"`
-    CreatedAt     time.Time              `json:"created_at"`
-    UpdatedAt     time.Time              `json:"updated_at"`
-    CompletedAt   *time.Time             `json:"completed_at,omitempty"`
+    ID               string                 `json:"id"`
+    WorkflowID       string                 `json:"workflow_id"`
+    CurrentState     string                 `json:"current_state"`
+    PreviousState    *string                `json:"previous_state,omitempty"`
+    CurrentSubState  *string                `json:"current_sub_state,omitempty"`   // R17
+    PreviousSubState *string                `json:"previous_sub_state,omitempty"`  // R17
+    Status           string                 `json:"status"`
+    Version          int64                  `json:"version"`
+    Data             map[string]interface{} `json:"data"`
+    Variables        map[string]interface{} `json:"variables"`
+    CurrentActor     string                 `json:"current_actor,omitempty"`
+    CreatedAt        time.Time              `json:"created_at"`
+    UpdatedAt        time.Time              `json:"updated_at"`
+    CompletedAt      *time.Time             `json:"completed_at,omitempty"`
 }
 
 // TriggerEventRequest
 type TriggerEventRequest struct {
-    Event string                 `json:"event" binding:"required"`
-    Actor string                 `json:"actor" binding:"required"`
-    Data  map[string]interface{} `json:"data"`
+    Event    string                 `json:"event" binding:"required"`
+    Actor    string                 `json:"actor" binding:"required"`
+    Data     map[string]interface{} `json:"data"`
+    Reason   string                 `json:"reason,omitempty"`     // R23
+    Feedback string                 `json:"feedback,omitempty"`   // R23
+    Metadata map[string]interface{} `json:"metadata,omitempty"`   // R23
 }
 
 // TransitionResponse
@@ -1142,6 +1700,135 @@ type ErrorResponse struct {
     Code    string `json:"code,omitempty"`
     Details string `json:"details,omitempty"`
 }
+
+// R18: Escalamientos - Request/Response
+type EscalateRequest struct {
+    DepartmentId string `json:"department_id" binding:"required"`
+    Reason       string `json:"reason" binding:"required"`
+}
+
+type EscalationReplyRequest struct {
+    EscalationId string `json:"escalation_id" binding:"required"`
+    Response     string `json:"response" binding:"required"`
+}
+
+type EscalationResponse struct {
+    ID           string     `json:"id"`
+    InstanceID   string     `json:"instance_id"`
+    DepartmentID string     `json:"department_id"`
+    Reason       string     `json:"reason"`
+    EscalatedBy  string     `json:"escalated_by"`
+    EscalatedAt  time.Time  `json:"escalated_at"`
+    Status       string     `json:"status"`
+    Response     *string    `json:"response,omitempty"`
+    RespondedBy  *string    `json:"responded_by,omitempty"`
+    RespondedAt  *time.Time `json:"responded_at,omitempty"`
+    ClosedBy     *string    `json:"closed_by,omitempty"`
+    ClosedAt     *time.Time `json:"closed_at,omitempty"`
+}
+
+type EscalationListResponse struct {
+    Escalations []EscalationResponse `json:"escalations"`
+    Total       int                  `json:"total"`
+}
+
+// R19: Reclasificación - Request/Response
+type ReclassifyRequest struct {
+    NewType string `json:"new_type" binding:"required"`
+    Reason  string `json:"reason" binding:"required"`
+}
+
+type ReclassificationResponse struct {
+    InstanceID     string    `json:"instance_id"`
+    FromType       string    `json:"from_type"`
+    ToType         string    `json:"to_type"`
+    CurrentState   string    `json:"current_state"`
+    Version        int64     `json:"version"`
+    ReclassifiedAt time.Time `json:"reclassified_at"`
+}
+
+type ReclassificationListResponse struct {
+    Reclassifications []TransitionResponse `json:"reclassifications"`
+    Total             int                  `json:"total"`
+    UniqueTypes       []string             `json:"unique_types"`
+}
+
+// R21: Plantillas - Request/Response
+type CloneFromTemplateRequest struct {
+    TemplateID  string                 `json:"template_id" binding:"required"`
+    NewID       *string                `json:"new_id,omitempty"`
+    Name        string                 `json:"name" binding:"required"`
+    Description string                 `json:"description"`
+    Overrides   map[string]interface{} `json:"overrides,omitempty"`
+}
+
+type WorkflowResponse struct {
+    ID          string                 `json:"id"`
+    Name        string                 `json:"name"`
+    Description string                 `json:"description"`
+    Version     string                 `json:"version"`
+    Config      map[string]interface{} `json:"config"`
+    IsTemplate  bool                   `json:"is_template"`
+    TemplateID  *string                `json:"template_id,omitempty"`
+    CreatedAt   time.Time              `json:"created_at"`
+    UpdatedAt   time.Time              `json:"updated_at"`
+}
+
+// R22: Import/Export - Request/Response
+type ExportBatchRequest struct {
+    WorkflowIDs []string `json:"workflow_ids" binding:"required"`
+}
+
+type ImportBulkResponse struct {
+    TotalProcessed int               `json:"total_processed"`
+    Successful     int               `json:"successful"`
+    Failed         int               `json:"failed"`
+    Errors         []ImportError     `json:"errors,omitempty"`
+    ImportedIDs    []string          `json:"imported_ids"`
+}
+
+type ImportError struct {
+    WorkflowID string `json:"workflow_id"`
+    Error      string `json:"error"`
+    Line       *int   `json:"line,omitempty"`
+}
+
+// R23: Metadata Extendida - Request/Response
+type TransitionsQueryRequest struct {
+    WorkflowID     string                 `json:"workflow_id,omitempty"`
+    Events         []string               `json:"events,omitempty"`
+    FromDate       *time.Time             `json:"from_date,omitempty"`
+    ToDate         *time.Time             `json:"to_date,omitempty"`
+    HasFeedback    *bool                  `json:"has_feedback,omitempty"`
+    MetadataFilter map[string]interface{} `json:"metadata_filter,omitempty"`
+    Limit          int                    `json:"limit" binding:"min=1,max=100"`
+    Offset         int                    `json:"offset" binding:"min=0"`
+}
+
+type TransitionsQueryResponse struct {
+    Transitions []TransitionDetailResponse `json:"transitions"`
+    Total       int                        `json:"total"`
+    Limit       int                        `json:"limit"`
+    Offset      int                        `json:"offset"`
+}
+
+type TransitionDetailResponse struct {
+    ID           string                 `json:"id"`
+    InstanceID   string                 `json:"instance_id"`
+    Event        string                 `json:"event"`
+    FromState    string                 `json:"from_state"`
+    ToState      string                 `json:"to_state"`
+    FromSubState *string                `json:"from_sub_state,omitempty"`
+    ToSubState   *string                `json:"to_sub_state,omitempty"`
+    Actor        string                 `json:"actor"`
+    ActorRole    string                 `json:"actor_role"`
+    Data         map[string]interface{} `json:"data,omitempty"`
+    Reason       *string                `json:"reason,omitempty"`
+    Feedback     *string                `json:"feedback,omitempty"`
+    Metadata     map[string]interface{} `json:"metadata,omitempty"`
+    DurationMs   int                    `json:"duration_ms"`
+    CreatedAt    time.Time              `json:"created_at"`
+}
 ```
 
 ---
@@ -1159,6 +1846,10 @@ CREATE TABLE workflows (
     version VARCHAR(50) NOT NULL,
     config JSONB NOT NULL,
 
+    -- R21: Plantillas de workflows
+    is_template BOOLEAN NOT NULL DEFAULT FALSE,
+    template_id UUID REFERENCES workflows(id),
+
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
     deleted_at TIMESTAMP
@@ -1166,6 +1857,8 @@ CREATE TABLE workflows (
 
 CREATE INDEX idx_workflows_name ON workflows(name);
 CREATE INDEX idx_workflows_deleted ON workflows(deleted_at) WHERE deleted_at IS NULL;
+CREATE INDEX idx_workflows_template ON workflows(template_id) WHERE template_id IS NOT NULL;
+CREATE INDEX idx_workflows_is_template ON workflows(is_template) WHERE is_template = TRUE;
 
 -- Workflow instances (ejecuciones)
 CREATE TABLE workflow_instances (
@@ -1177,6 +1870,10 @@ CREATE TABLE workflow_instances (
     current_state VARCHAR(100) NOT NULL,
     previous_state VARCHAR(100),
     status VARCHAR(50) NOT NULL DEFAULT 'running',
+
+    -- R17: Subestados
+    current_sub_state VARCHAR(100),
+    previous_sub_state VARCHAR(100),
 
     -- Optimistic locking
     version BIGINT NOT NULL DEFAULT 1,
@@ -1214,6 +1911,9 @@ CREATE INDEX idx_instances_version ON workflow_instances(id, version);
 -- Índice compuesto para queries complejas
 CREATE INDEX idx_instances_query ON workflow_instances(workflow_id, status, current_state, created_at DESC);
 
+-- R17: Índice para subestados
+CREATE INDEX idx_instances_substates ON workflow_instances(current_state, current_sub_state, status) WHERE current_sub_state IS NOT NULL;
+
 -- Transiciones (historial)
 CREATE TABLE workflow_transitions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1223,10 +1923,20 @@ CREATE TABLE workflow_transitions (
     from_state VARCHAR(100) NOT NULL,
     to_state VARCHAR(100) NOT NULL,
 
+    -- R17: Subestados
+    from_sub_state VARCHAR(100),
+    to_sub_state VARCHAR(100),
+
     actor VARCHAR(255),
     actor_role VARCHAR(100),
 
     data JSONB,
+
+    -- R23: Metadata extendida
+    reason TEXT,
+    feedback TEXT,
+    metadata JSONB,
+
     duration_ms INTEGER,
 
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -1235,6 +1945,10 @@ CREATE TABLE workflow_transitions (
 CREATE INDEX idx_transitions_instance ON workflow_transitions(instance_id, created_at DESC);
 CREATE INDEX idx_transitions_event ON workflow_transitions(event);
 CREATE INDEX idx_transitions_actor ON workflow_transitions(actor);
+
+-- R23: Índices para metadata
+CREATE INDEX idx_transitions_has_feedback ON workflow_transitions(instance_id) WHERE feedback IS NOT NULL;
+CREATE INDEX idx_transitions_metadata ON workflow_transitions USING GIN (metadata) WHERE metadata IS NOT NULL;
 
 -- Timers activos
 CREATE TABLE workflow_timers (
@@ -1295,6 +2009,34 @@ CREATE TABLE external_events (
 CREATE INDEX idx_external_events_processed ON external_events(processed_at);
 CREATE INDEX idx_external_events_pending ON external_events(created_at) WHERE processed_at IS NULL;
 CREATE INDEX idx_external_events_instance ON external_events(instance_id);
+
+-- R18: Escalamientos manuales
+CREATE TABLE workflow_escalations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    instance_id UUID NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+
+    department_id VARCHAR(100) NOT NULL,
+    reason TEXT NOT NULL,
+
+    escalated_by VARCHAR(255) NOT NULL,
+    escalated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+
+    response TEXT,
+    responded_by VARCHAR(255),
+    responded_at TIMESTAMP,
+
+    closed_by VARCHAR(255),
+    closed_at TIMESTAMP,
+
+    CONSTRAINT check_escalation_status CHECK (status IN ('pending', 'responded', 'closed', 'canceled'))
+);
+
+CREATE INDEX idx_escalations_instance ON workflow_escalations(instance_id, escalated_at DESC);
+CREATE INDEX idx_escalations_department ON workflow_escalations(department_id, status);
+CREATE INDEX idx_escalations_status ON workflow_escalations(status) WHERE status IN ('pending', 'responded');
+CREATE INDEX idx_escalations_escalated_by ON workflow_escalations(escalated_by);
 
 -- Auditoría (opcional)
 CREATE TABLE audit_log (
@@ -2971,6 +3713,20 @@ Ver `docs/architecture/adr/` para Architecture Decision Records detallados.
 
 ---
 
-**Versión**: 1.0
-**Fecha**: 2025-01-15
+**Versión**: 2.0
+**Fecha**: 2025-11-10
 **Autores**: FlowEngine Team
+
+**Changelog v2.0**:
+- R17: Agregado sistema de subestados jerárquicos
+- R18: Agregado sistema de escalamientos manuales
+- R19: Agregado soporte para reclasificación de instancias
+- R20: Agregado sistema de guards de transición avanzados
+- R21: Agregado sistema de plantillas de workflows
+- R22: Agregado import/export de workflows en YAML/JSON
+- R23: Agregado metadata extendida en transiciones con validación
+- Actualizado schema de base de datos con nuevas tablas y campos
+- Actualizado API con 12+ nuevos endpoints
+- Actualizado domain layer con nuevos agregados y value objects
+- Actualizado casos de uso de aplicación
+- Agregado ejemplo completo de configuración YAML con nuevas características
