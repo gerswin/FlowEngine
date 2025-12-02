@@ -1,0 +1,1035 @@
+openapi: 3.0.3
+info:
+  title: FlowEngine API
+  description: |
+    Motor de workflows para gestión documental con soporte para flujos MinTrabajo.
+
+    ## Autenticación
+    La API utiliza JWT Bearer tokens. Incluye el token en el header:
+    ```
+    Authorization: Bearer <token>
+    ```
+
+    ## Formato de Respuesta
+    Todas las respuestas siguen el estándar JSON:API v1.0.
+
+    ## Códigos de Error
+    | Código | Descripción |
+    |--------|-------------|
+    | 400 | Bad Request - Parámetros inválidos |
+    | 401 | Unauthorized - Token inválido o ausente |
+    | 404 | Not Found - Recurso no encontrado |
+    | 409 | Conflict - Conflicto de estado o tipo |
+    | 422 | Unprocessable Entity - Validación fallida |
+    | 500 | Internal Server Error |
+
+  version: 1.0.0
+  contact:
+    name: LinkTIC - La Fabric
+    url: https://github.com/LaFabric-LinkTIC/FlowEngine
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://api.flowengine.example.com
+    description: Production
+
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: Auth
+    description: Authentication endpoints
+  - name: Workflows
+    description: Workflow definition management
+  - name: Instances
+    description: Workflow instance execution
+
+paths:
+  /health:
+    get:
+      summary: Health Check
+      description: Verifica el estado del servicio
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /api/v1/auth/token:
+    post:
+      summary: Generate JWT Token (Development)
+      description: |
+        Genera un token JWT para desarrollo.
+        **No usar en producción.**
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                  example: "550e8400-e29b-41d4-a716-446655440000"
+                roles:
+                  type: array
+                  items:
+                    type: string
+                  example: ["admin", "user"]
+      responses:
+        '200':
+          description: Token generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  expires_at:
+                    type: string
+                    format: date-time
+
+  /api/v1/workflows:
+    post:
+      summary: Create Workflow
+      description: Crea una nueva definición de workflow
+      tags:
+        - Workflows
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkflowRequest'
+            example:
+              data:
+                type: workflow
+                attributes:
+                  name: "Document Approval"
+                  description: "Simple document approval workflow"
+                  created_by: "550e8400-e29b-41d4-a716-446655440000"
+                  initial_state:
+                    id: draft
+                    name: Draft
+                    description: Initial draft state
+                    is_final: false
+                  states:
+                    - id: draft
+                      name: Draft
+                      is_final: false
+                    - id: review
+                      name: Under Review
+                      is_final: false
+                    - id: approved
+                      name: Approved
+                      is_final: true
+                    - id: rejected
+                      name: Rejected
+                      is_final: true
+                  events:
+                    - name: submit
+                      sources: [draft]
+                      destination: review
+                    - name: approve
+                      sources: [review]
+                      destination: approved
+                    - name: reject
+                      sources: [review]
+                      destination: rejected
+      responses:
+        '201':
+          description: Workflow created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+    get:
+      summary: List Workflows
+      description: Obtiene todos los workflows con paginación
+      tags:
+        - Workflows
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageNumber'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: List of workflows
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowListResponse'
+
+  /api/v1/workflows/{id}:
+    get:
+      summary: Get Workflow
+      description: Obtiene un workflow por ID
+      tags:
+        - Workflows
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Workflow details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/workflows/from-yaml:
+    post:
+      summary: Create Workflow from YAML
+      description: |
+        Crea un workflow desde una definición YAML.
+        Soporta JSON body o multipart file upload.
+      tags:
+        - Workflows
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkflowFromYAMLRequest'
+            example:
+              data:
+                type: workflow-yaml
+                attributes:
+                  created_by: "550e8400-e29b-41d4-a716-446655440000"
+                  yaml: |
+                    name: "Simple Approval"
+                    description: "Basic approval workflow"
+                    initial_state: draft
+                    states:
+                      - id: draft
+                        name: Draft
+                      - id: approved
+                        name: Approved
+                        is_final: true
+                    events:
+                      - name: approve
+                        sources: [draft]
+                        destination: approved
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                created_by:
+                  type: string
+                  format: uuid
+      responses:
+        '201':
+          description: Workflow created from YAML
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowFromYAMLResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/v1/instances:
+    post:
+      summary: Create Instance
+      description: Crea una nueva instancia de workflow
+      tags:
+        - Instances
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInstanceRequest'
+            example:
+              data:
+                type: instance
+                attributes:
+                  workflow_id: "550e8400-e29b-41d4-a716-446655440000"
+                  started_by: "550e8400-e29b-41d4-a716-446655440001"
+                  data:
+                    document_type: "invoice"
+                    amount: 1500.00
+                  variables:
+                    department: "finance"
+      responses:
+        '201':
+          description: Instance created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+    get:
+      summary: List Instances
+      description: Obtiene todas las instancias con filtros y paginación
+      tags:
+        - Instances
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageNumber'
+        - $ref: '#/components/parameters/PageSize'
+        - name: filter[workflow_id]
+          in: query
+          description: Filtrar por workflow ID
+          schema:
+            type: string
+            format: uuid
+        - name: workflow_id
+          in: query
+          description: (Legacy) Filtrar por workflow ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of instances
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceListResponse'
+
+  /api/v1/instances/{id}:
+    get:
+      summary: Get Instance
+      description: Obtiene una instancia por ID con su historial de transiciones
+      tags:
+        - Instances
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Instance details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceDetailResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/instances/{id}/transitions:
+    post:
+      summary: Transition Instance
+      description: Ejecuta una transición de estado en la instancia
+      tags:
+        - Instances
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransitionRequest'
+            example:
+              data:
+                type: transition
+                attributes:
+                  event: approve
+                  actor_id: "550e8400-e29b-41d4-a716-446655440001"
+                  reason: "Document meets all requirements"
+                  feedback: "Approved for processing"
+                  data:
+                    approved_amount: 1500.00
+      responses:
+        '200':
+          description: Transition successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransitionResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/instances/{id}/clone:
+    post:
+      summary: Clone Instance
+      description: |
+        Clona una instancia para distribución paralela.
+        Útil para revisiones múltiples o aprobaciones concurrentes.
+      tags:
+        - Instances
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloneInstanceRequest'
+            example:
+              data:
+                type: clone-request
+                attributes:
+                  assignees:
+                    - user_id: "550e8400-e29b-41d4-a716-446655440002"
+                      office_id: "office-001"
+                    - user_id: "550e8400-e29b-41d4-a716-446655440003"
+                      office_id: "office-002"
+                  consolidator_id: "550e8400-e29b-41d4-a716-446655440001"
+                  reason: "Requires multi-department review"
+                  timeout_duration: "7d"
+      responses:
+        '201':
+          description: Instances cloned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloneResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    PageNumber:
+      name: page[number]
+      in: query
+      description: Número de página (1-indexed)
+      schema:
+        type: integer
+        default: 1
+        minimum: 1
+    PageSize:
+      name: page[size]
+      in: query
+      description: Elementos por página
+      schema:
+        type: integer
+        default: 20
+        minimum: 1
+        maximum: 100
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            errors:
+              - status: "400"
+                code: INVALID_REQUEST
+                title: Invalid request body
+                detail: "Key: 'CreateInstanceRequest.Data.Type' Error:Field validation for 'Type' failed"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            errors:
+              - status: "404"
+                code: NOT_FOUND
+                title: Resource not found
+                detail: "Workflow not found with ID: 550e8400-e29b-41d4-a716-446655440000"
+    Conflict:
+      description: State conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            errors:
+              - status: "409"
+                code: TRANSITION_ERROR
+                title: Invalid transition
+                detail: "Cannot transition from 'approved' to 'review' with event 'submit'"
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    # Common
+    ErrorResponse:
+      type: object
+      properties:
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              status:
+                type: string
+              code:
+                type: string
+              title:
+                type: string
+              detail:
+                type: string
+
+    Links:
+      type: object
+      properties:
+        self:
+          type: string
+        first:
+          type: string
+        prev:
+          type: string
+        next:
+          type: string
+        last:
+          type: string
+
+    PaginationMeta:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: object
+          properties:
+            number:
+              type: integer
+            size:
+              type: integer
+            total:
+              type: integer
+
+    # Workflow Schemas
+    StateDTO:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+          example: draft
+        name:
+          type: string
+          example: Draft
+        description:
+          type: string
+        is_final:
+          type: boolean
+          default: false
+
+    EventDTO:
+      type: object
+      required:
+        - name
+        - sources
+        - destination
+      properties:
+        name:
+          type: string
+          example: submit
+        sources:
+          type: array
+          items:
+            type: string
+          example: [draft]
+        destination:
+          type: string
+          example: review
+
+    CreateWorkflowRequest:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: object
+          required:
+            - type
+            - attributes
+          properties:
+            type:
+              type: string
+              enum: [workflow]
+            attributes:
+              type: object
+              required:
+                - name
+                - initial_state
+                - states
+                - created_by
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                initial_state:
+                  $ref: '#/components/schemas/StateDTO'
+                states:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/StateDTO'
+                events:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/EventDTO'
+                created_by:
+                  type: string
+                  format: uuid
+
+    CreateWorkflowFromYAMLRequest:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: object
+          required:
+            - type
+            - attributes
+          properties:
+            type:
+              type: string
+              enum: [workflow-yaml]
+            attributes:
+              type: object
+              required:
+                - yaml
+                - created_by
+              properties:
+                yaml:
+                  type: string
+                  description: YAML workflow definition
+                created_by:
+                  type: string
+                  format: uuid
+
+    WorkflowResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            type:
+              type: string
+              example: workflow
+            id:
+              type: string
+              format: uuid
+            attributes:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                version:
+                  type: string
+                  example: "1.0.0"
+                states:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/StateDTO'
+                events:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/EventDTO'
+                created_at:
+                  type: string
+                  format: date-time
+                updated_at:
+                  type: string
+                  format: date-time
+            links:
+              $ref: '#/components/schemas/Links'
+
+    WorkflowFromYAMLResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            type:
+              type: string
+              example: workflow
+            id:
+              type: string
+              format: uuid
+            attributes:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                version:
+                  type: string
+                initial_state:
+                  type: string
+                states_count:
+                  type: integer
+                events_count:
+                  type: integer
+                warnings:
+                  type: array
+                  items:
+                    type: string
+                created_at:
+                  type: string
+                  format: date-time
+        meta:
+          type: object
+          properties:
+            source:
+              type: string
+              example: yaml
+
+    WorkflowListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              id:
+                type: string
+              attributes:
+                type: object
+              links:
+                $ref: '#/components/schemas/Links'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+        links:
+          $ref: '#/components/schemas/Links'
+
+    # Instance Schemas
+    CreateInstanceRequest:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: object
+          required:
+            - type
+            - attributes
+          properties:
+            type:
+              type: string
+              enum: [instance]
+            attributes:
+              type: object
+              required:
+                - workflow_id
+                - started_by
+              properties:
+                workflow_id:
+                  type: string
+                  format: uuid
+                parent_id:
+                  type: string
+                  format: uuid
+                  description: Optional parent instance ID for subprocesses
+                started_by:
+                  type: string
+                  format: uuid
+                data:
+                  type: object
+                  additionalProperties: true
+                variables:
+                  type: object
+                  additionalProperties: true
+
+    InstanceResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            type:
+              type: string
+              example: instance
+            id:
+              type: string
+              format: uuid
+            attributes:
+              type: object
+              properties:
+                workflow_id:
+                  type: string
+                  format: uuid
+                parent_id:
+                  type: string
+                  format: uuid
+                current_state:
+                  type: string
+                status:
+                  type: string
+                  enum: [RUNNING, PAUSED, COMPLETED, CANCELED, FAILED]
+                version:
+                  type: string
+                created_at:
+                  type: string
+                  format: date-time
+                updated_at:
+                  type: string
+                  format: date-time
+            links:
+              $ref: '#/components/schemas/Links'
+
+    InstanceDetailResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            type:
+              type: string
+            id:
+              type: string
+            attributes:
+              type: object
+              properties:
+                workflow_id:
+                  type: string
+                current_state:
+                  type: string
+                status:
+                  type: string
+                version:
+                  type: string
+                data:
+                  type: object
+                variables:
+                  type: object
+                created_at:
+                  type: string
+                  format: date-time
+                updated_at:
+                  type: string
+                  format: date-time
+
+    InstanceListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+        links:
+          $ref: '#/components/schemas/Links'
+
+    TransitionRequest:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: object
+          required:
+            - type
+            - attributes
+          properties:
+            type:
+              type: string
+              enum: [transition]
+            attributes:
+              type: object
+              required:
+                - event
+                - actor_id
+              properties:
+                event:
+                  type: string
+                  description: Event name triggering the transition
+                actor_id:
+                  type: string
+                  format: uuid
+                reason:
+                  type: string
+                feedback:
+                  type: string
+                metadata:
+                  type: object
+                  additionalProperties: true
+                data:
+                  type: object
+                  additionalProperties: true
+                  description: Data updates to apply during transition
+
+    TransitionResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            type:
+              type: string
+              example: instance
+            id:
+              type: string
+              format: uuid
+            attributes:
+              type: object
+              properties:
+                workflow_id:
+                  type: string
+                previous_state:
+                  type: string
+                current_state:
+                  type: string
+                status:
+                  type: string
+                version:
+                  type: string
+                updated_at:
+                  type: string
+                  format: date-time
+
+    CloneInstanceRequest:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: object
+          required:
+            - type
+            - attributes
+          properties:
+            type:
+              type: string
+              enum: [clone-request]
+            attributes:
+              type: object
+              required:
+                - assignees
+                - consolidator_id
+                - reason
+                - timeout_duration
+              properties:
+                assignees:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - user_id
+                    properties:
+                      user_id:
+                        type: string
+                        format: uuid
+                      office_id:
+                        type: string
+                consolidator_id:
+                  type: string
+                  format: uuid
+                reason:
+                  type: string
+                timeout_duration:
+                  type: string
+                  description: Duration string (e.g., "7d", "24h")
+                metadata:
+                  type: object
+                  additionalProperties: true
+
+    CloneResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            type:
+              type: string
+              example: clone-group
+            id:
+              type: string
+              format: uuid
+              description: Clone group ID
+            attributes:
+              type: object
+              properties:
+                parent_id:
+                  type: string
+                  format: uuid
+                cloned_instances:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      assignee_id:
+                        type: string
+                expires_at:
+                  type: string
+                  format: date-time
