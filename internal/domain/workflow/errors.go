@@ -8,6 +8,9 @@ import (
 
 // Workflow-specific error codes
 var (
+	// ErrNotFound is returned when a workflow is not found.
+	ErrNotFound = shared.NotFoundError("workflow not found")
+
 	// ErrInvalidWorkflow is returned when a workflow is invalid.
 	ErrInvalidWorkflow = shared.InvalidInputError("invalid workflow")
 
@@ -69,12 +72,18 @@ func EventAlreadyExistsError(eventName string) *shared.DomainError {
 // InvalidTransitionError creates a new invalid transition error with context.
 func InvalidTransitionError(from State, event Event) *shared.DomainError {
 	return shared.InvalidStateError(
-		fmt.Sprintf("invalid transition from state '%s' with event '%s'", from.ID(), event.Name()),
-	).WithContext("from_state", from.ID()).
-		WithContext("event", event.Name())
+		fmt.Sprintf("invalid transition from state '%s' with event '%s'", from.ID, event.Name),
+	).WithContext("from_state", from.ID).
+		WithContext("event", event.Name)
 }
 
 // InvalidWorkflowError creates a new invalid workflow error with context.
 func InvalidWorkflowError(message string) *shared.DomainError {
 	return shared.InvalidInputError(fmt.Sprintf("invalid workflow: %s", message))
+}
+
+// WorkflowNotFoundError creates a new workflow not found error with context.
+func WorkflowNotFoundError(workflowID string) *shared.DomainError {
+	return shared.NotFoundError(fmt.Sprintf("workflow not found: %s", workflowID)).
+		WithContext("workflow_id", workflowID)
 }

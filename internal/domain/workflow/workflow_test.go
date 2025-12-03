@@ -16,7 +16,7 @@ func TestNewWorkflow_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, workflow)
 	assert.Equal(t, "Approval Workflow", workflow.Name())
-	assert.Equal(t, "draft", workflow.InitialState().ID())
+	assert.Equal(t, "draft", workflow.InitialState().ID)
 	assert.Equal(t, "1.0.0", workflow.Version().String())
 	assert.True(t, workflow.ID().IsValid())
 	assert.False(t, workflow.CreatedAt().IsZero())
@@ -83,8 +83,8 @@ func TestWorkflow_GetState_Success(t *testing.T) {
 	state, err := workflow.GetState("draft")
 
 	require.NoError(t, err)
-	assert.Equal(t, "draft", state.ID())
-	assert.Equal(t, "Draft", state.Name())
+	assert.Equal(t, "draft", state.ID)
+	assert.Equal(t, "Draft", state.Name)
 }
 
 func TestWorkflow_GetState_NotFound(t *testing.T) {
@@ -95,7 +95,7 @@ func TestWorkflow_GetState_NotFound(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.True(t, StateNotFoundError("nonexistent").Is(err))
-	assert.Equal(t, "", state.ID())
+	assert.Equal(t, "", state.ID)
 }
 
 func TestWorkflow_AddEvent_ValidStates_Success(t *testing.T) {

@@ -307,28 +307,28 @@ func (we *WorkflowEmulator) showWorkflow(name string) {
 	fmt.Printf("\n📋 Workflow: %s\n", wf.Name())
 	fmt.Printf("  ID: %s\n", wf.ID().String())
 	fmt.Printf("  Version: %s\n", wf.Version().String())
-	fmt.Printf("  Initial State: %s\n", wf.InitialState().ID())
+	fmt.Printf("  Initial State: %s\n", wf.InitialState().ID)
 
 	fmt.Println("\n  States:")
 	for _, state := range wf.States() {
 		marker := ""
-		if state.IsFinal() {
+		if state.IsFinal {
 			marker = " [FINAL]"
 		}
-		fmt.Printf("    • %s - %s%s\n", state.ID(), state.Name(), marker)
+		fmt.Printf("    • %s - %s%s\n", state.ID, state.Name, marker)
 	}
 
 	fmt.Println("\n  Events:")
 	for _, event := range wf.Events() {
-		sources := event.Sources()
+		sources := event.Sources
 		sourceIDs := make([]string, len(sources))
 		for i, s := range sources {
-			sourceIDs[i] = s.ID()
+			sourceIDs[i] = s.ID
 		}
 		fmt.Printf("    • %s: %v → %s\n",
-			event.Name(),
+			event.Name,
 			sourceIDs,
-			event.Destination().ID())
+			event.Destination.ID)
 	}
 }
 
@@ -342,7 +342,7 @@ func (we *WorkflowEmulator) createInstance(workflowName string) {
 	inst, err := instance.NewInstance(
 		wf.ID(),
 		wf.Name(),
-		wf.InitialState().ID(),
+		wf.InitialState().ID,
 		we.systemActor,
 	)
 	if err != nil {
@@ -430,7 +430,7 @@ func (we *WorkflowEmulator) executeTransition(id, eventName string) {
 
 	// Execute transition
 	metadata := instance.NewTransitionMetadataWithReason(fmt.Sprintf("Manual transition: %s", eventName))
-	err = inst.Transition(evt.Destination().ID(), eventName, we.systemActor, metadata)
+	err = inst.Transition(evt.Destination.ID, eventName, we.systemActor, metadata)
 	if err != nil {
 		fmt.Printf("❌ Transition failed: %v\n", err)
 		return

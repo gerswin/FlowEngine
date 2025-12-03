@@ -2,6 +2,7 @@ version: "1.0"
 
 workflow:
   id: "person_document_flow"
+  id_form:
   name: "Flujo de Radicación de Documentos (Personas)"
   description: |
     Sistema completo de estados para documentos/solicitudes con soporte de:
@@ -49,7 +50,7 @@ workflow:
     - id: in_progress
       name: En Gestión
       description: Documento siendo gestionado activamente
-      timeout: 48h
+      timeout: 5h
       on_timeout: escalate_timeout
       allowed_roles:
         - gestionador
@@ -69,6 +70,8 @@ workflow:
         color: "#f39c12"
         icon: "tasks"
         priority: "medium"
+      camposRequeridos:
+        idExpdiente
 
     # Estado 4: InReview (En Revisión)
     - id: in_review

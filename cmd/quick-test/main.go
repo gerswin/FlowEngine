@@ -11,7 +11,7 @@ import (
 // Quick test script - modify and run to test different scenarios
 func main() {
 	fmt.Println("🧪 FlowEngine Quick Test")
-	fmt.Println("========================\n")
+	fmt.Println("========================")
 
 	actor := shared.NewID()
 
@@ -52,7 +52,7 @@ func main() {
 	// ============================================
 	fmt.Println("🎬 Creating Instance...")
 
-	inst, _ := instance.NewInstance(wf.ID(), wf.Name(), draft.ID(), actor)
+	inst, _ := instance.NewInstance(wf.ID(), wf.Name(), draft.ID, actor)
 	inst.UpdateData("title", "Documento de Prueba")
 	inst.UpdateVariable("priority", "high")
 
@@ -68,11 +68,11 @@ func main() {
 	// Transición 1: Submit
 	fmt.Println("\n→ Transition: submit")
 	metadata1 := instance.NewTransitionMetadataWithReason("Enviando para revisión")
-	err := inst.Transition(review.ID(), "submit", actor, metadata1)
+	err := inst.Transition(review.ID, "submit", actor, metadata1)
 	if err != nil {
 		fmt.Printf("   ❌ Error: %v\n", err)
 	} else {
-		fmt.Printf("   ✅ Estado: %s → %s\n", draft.ID(), inst.CurrentState())
+		fmt.Printf("   ✅ Estado: %s → %s\n", draft.ID, inst.CurrentState())
 		fmt.Printf("   Version: %s\n", inst.Version().String())
 	}
 
@@ -86,11 +86,11 @@ func main() {
 			"score":    95,
 		},
 	)
-	err = inst.Transition(approved.ID(), "approve", actor, metadata2)
+	err = inst.Transition(approved.ID, "approve", actor, metadata2)
 	if err != nil {
 		fmt.Printf("   ❌ Error: %v\n", err)
 	} else {
-		fmt.Printf("   ✅ Estado: %s → %s\n", review.ID(), inst.CurrentState())
+		fmt.Printf("   ✅ Estado: %s → %s\n", review.ID, inst.CurrentState())
 		fmt.Printf("   Version: %s\n", inst.Version().String())
 	}
 

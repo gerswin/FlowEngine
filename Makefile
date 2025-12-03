@@ -50,7 +50,7 @@ lint: ## Ejecutar linter (golangci-lint)
 
 run: ## Ejecutar API server
 	@echo "Iniciando API server..."
-	$(GORUN) $(MAIN_PATH)
+	$(GORUN) cmd/api/main.go
 
 clean: ## Limpiar archivos generados
 	@echo "Limpiando archivos generados..."

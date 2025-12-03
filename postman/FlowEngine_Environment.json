@@ -1,0 +1,45 @@
+{
+	"id": "flowengine-env-local",
+	"name": "FlowEngine - Local",
+	"values": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:8080",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "authToken",
+			"value": "",
+			"type": "secret",
+			"enabled": true
+		},
+		{
+			"key": "workflowId",
+			"value": "",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "instanceId",
+			"value": "",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "cloneInstanceId",
+			"value": "",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "cloneGroupId",
+			"value": "",
+			"type": "default",
+			"enabled": true
+		}
+	],
+	"_postman_variable_scope": "environment",
+	"_postman_exported_at": "2024-12-01T00:00:00.000Z",
+	"_postman_exported_using": "FlowEngine"
+}

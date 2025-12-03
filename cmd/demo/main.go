@@ -139,7 +139,7 @@ func main() {
 	printSuccess(fmt.Sprintf("Workflow created: %s [ID: %s]",
 		approvalWorkflow.Name(),
 		approvalWorkflow.ID().String()[:8]))
-	printInfo(fmt.Sprintf("   Initial State: %s", draftState.ID()))
+	printInfo(fmt.Sprintf("   Initial State: %s", draftState.ID))
 	printInfo(fmt.Sprintf("   Version: %s", approvalWorkflow.Version().String()))
 
 	// Add states to workflow
@@ -152,10 +152,10 @@ func main() {
 	states := approvalWorkflow.States()
 	for _, state := range states {
 		marker := ""
-		if state.IsFinal() {
+		if state.IsFinal {
 			marker = " [FINAL]"
 		}
-		printSuccess(fmt.Sprintf("State: %s - %s%s", state.ID(), state.Name(), marker))
+		printSuccess(fmt.Sprintf("State: %s - %s%s", state.ID, state.Name, marker))
 	}
 
 	// Add events (transitions) to workflow
@@ -190,7 +190,7 @@ func main() {
 	inst, err := instance.NewInstance(
 		approvalWorkflow.ID(),
 		approvalWorkflow.Name(),
-		draftState.ID(),
+		draftState.ID,
 		systemActor,
 	)
 	if err != nil {
@@ -229,7 +229,7 @@ func main() {
 	// Transition 1: Submit for review
 	printSubHeader("Transition 1: Submit for Review")
 	metadata1 := instance.NewTransitionMetadataWithReason("Submitting document for review")
-	err = inst.Transition(reviewState.ID(), "submit", systemActor, metadata1)
+	err = inst.Transition(reviewState.ID, "submit", systemActor, metadata1)
 	if err != nil {
 		printError(fmt.Sprintf("Transition failed: %v", err))
 	} else {
@@ -255,7 +255,7 @@ func main() {
 	// Transition with sub-state
 	printSubHeader("Transition with Sub-State: QA Check")
 	metadata2 := instance.NewTransitionMetadataWithReason("Starting QA review")
-	err = inst.TransitionWithSubState(reviewState.ID(), subStateQA, "submit", systemActor, metadata2)
+	err = inst.TransitionWithSubState(reviewState.ID, subStateQA, "submit", systemActor, metadata2)
 	if err != nil {
 		printError(fmt.Sprintf("Transition failed: %v", err))
 	} else {
@@ -267,7 +267,7 @@ func main() {
 	// Change sub-state
 	printSubHeader("Changing Sub-State: Compliance Check")
 	metadata3 := instance.NewTransitionMetadataWithReason("Moving to compliance check")
-	err = inst.TransitionWithSubState(reviewState.ID(), subStateCompliance, "submit", systemActor, metadata3)
+	err = inst.TransitionWithSubState(reviewState.ID, subStateCompliance, "submit", systemActor, metadata3)
 	if err != nil {
 		printError(fmt.Sprintf("Transition failed: %v", err))
 	} else {
@@ -293,7 +293,7 @@ func main() {
 		},
 	)
 
-	err = inst.Transition(revisionsState.ID(), "request_revisions", systemActor, metadataWithFeedback)
+	err = inst.Transition(revisionsState.ID, "request_revisions", systemActor, metadataWithFeedback)
 	if err != nil {
 		printError(fmt.Sprintf("Transition failed: %v", err))
 	} else {
@@ -342,7 +342,7 @@ func main() {
 	// Resubmit after revisions
 	printSubHeader("Resubmit After Revisions")
 	metadata4 := instance.NewTransitionMetadataWithReason("Document updated with requested changes")
-	err = inst.Transition(reviewState.ID(), "resubmit", systemActor, metadata4)
+	err = inst.Transition(reviewState.ID, "resubmit", systemActor, metadata4)
 	if err != nil {
 		printError(fmt.Sprintf("Transition failed: %v", err))
 	} else {
@@ -362,7 +362,7 @@ func main() {
 		},
 	)
 
-	err = inst.Transition(approvedState.ID(), "approve", systemActor, metadata5)
+	err = inst.Transition(approvedState.ID, "approve", systemActor, metadata5)
 	if err != nil {
 		printError(fmt.Sprintf("Transition failed: %v", err))
 	} else {
@@ -435,7 +435,7 @@ func main() {
 	printHeader("🔒 Validation & Error Handling Demo")
 
 	printSubHeader("Attempting Invalid Transition on Completed Instance")
-	err = inst.Transition(rejectedState.ID(), "reject", systemActor, instance.EmptyTransitionMetadata())
+	err = inst.Transition(rejectedState.ID, "reject", systemActor, instance.EmptyTransitionMetadata())
 	if err != nil {
 		printError(fmt.Sprintf("Expected error: %v", err))
 		printSuccess("✓ Validation working correctly!")
@@ -449,7 +449,7 @@ func main() {
 	inst2, _ := instance.NewInstance(
 		approvalWorkflow.ID(),
 		approvalWorkflow.Name(),
-		draftState.ID(),
+		draftState.ID,
 		systemActor,
 	)
 	tracker.Track(inst2.DomainEvents())
@@ -457,7 +457,7 @@ func main() {
 	printSuccess(fmt.Sprintf("Instance 2 created: %s", inst2.ID().String()[:8]))
 
 	inst2.UpdateData("document_title", "Policy Update Proposal")
-	inst2.Transition(reviewState.ID(), "submit", systemActor, instance.NewTransitionMetadataWithReason("Submitting policy"))
+	inst2.Transition(reviewState.ID, "submit", systemActor, instance.NewTransitionMetadataWithReason("Submitting policy"))
 	tracker.Track(inst2.DomainEvents())
 
 	printSubHeader("Canceling Instance 2")

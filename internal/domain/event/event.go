@@ -79,13 +79,13 @@ func NewInstanceCreated(instanceID, workflowID shared.ID, workflowName, initialS
 // Payload returns the event data as a map.
 func (e *InstanceCreated) Payload() map[string]interface{} {
 	return map[string]interface{}{
-		"instance_id":    e.AggregateID(),
-		"workflow_id":    e.WorkflowID,
-		"workflow_name":  e.WorkflowName,
-		"initial_state":  e.InitialState,
-		"started_by":     e.StartedBy,
-		"data":           e.Data,
-		"occurred_at":    e.OccurredAt(),
+		"instance_id":   e.AggregateID(),
+		"workflow_id":   e.WorkflowID,
+		"workflow_name": e.WorkflowName,
+		"initial_state": e.InitialState,
+		"started_by":    e.StartedBy,
+		"data":          e.Data,
+		"occurred_at":   e.OccurredAt(),
 	}
 }
 
@@ -132,34 +132,34 @@ func (e *StateChanged) Payload() map[string]interface{} {
 // SubStateChanged is emitted when an instance sub-state changes (R17).
 type SubStateChanged struct {
 	BaseEvent
-	InstanceID     string
-	CurrentState   string
-	FromSubState   string
-	ToSubState     string
-	Actor          string
+	InstanceID   string
+	CurrentState string
+	FromSubState string
+	ToSubState   string
+	Actor        string
 }
 
 // NewSubStateChanged creates a new SubStateChanged event.
 func NewSubStateChanged(instanceID shared.ID, currentState, fromSubState, toSubState string, actor shared.ID) *SubStateChanged {
 	return &SubStateChanged{
-		BaseEvent:      newBaseEvent("instance.substate_changed", instanceID),
-		InstanceID:     instanceID.String(),
-		CurrentState:   currentState,
-		FromSubState:   fromSubState,
-		ToSubState:     toSubState,
-		Actor:          actor.String(),
+		BaseEvent:    newBaseEvent("instance.substate_changed", instanceID),
+		InstanceID:   instanceID.String(),
+		CurrentState: currentState,
+		FromSubState: fromSubState,
+		ToSubState:   toSubState,
+		Actor:        actor.String(),
 	}
 }
 
 // Payload returns the event data as a map.
 func (e *SubStateChanged) Payload() map[string]interface{} {
 	return map[string]interface{}{
-		"instance_id":    e.InstanceID,
-		"current_state":  e.CurrentState,
-		"from_substate":  e.FromSubState,
-		"to_substate":    e.ToSubState,
-		"actor":          e.Actor,
-		"occurred_at":    e.OccurredAt(),
+		"instance_id":   e.InstanceID,
+		"current_state": e.CurrentState,
+		"from_substate": e.FromSubState,
+		"to_substate":   e.ToSubState,
+		"actor":         e.Actor,
+		"occurred_at":   e.OccurredAt(),
 	}
 }
 
@@ -219,20 +219,20 @@ func (e *InstanceResumed) Payload() map[string]interface{} {
 // InstanceCompleted is emitted when an instance reaches a final state.
 type InstanceCompleted struct {
 	BaseEvent
-	InstanceID   string
-	FinalState   string
-	CompletedBy  string
-	Result       map[string]interface{}
+	InstanceID  string
+	FinalState  string
+	CompletedBy string
+	Result      map[string]interface{}
 }
 
 // NewInstanceCompleted creates a new InstanceCompleted event.
 func NewInstanceCompleted(instanceID shared.ID, finalState string, completedBy shared.ID, result map[string]interface{}) *InstanceCompleted {
 	return &InstanceCompleted{
-		BaseEvent:    newBaseEvent("instance.completed", instanceID),
-		InstanceID:   instanceID.String(),
-		FinalState:   finalState,
-		CompletedBy:  completedBy.String(),
-		Result:       result,
+		BaseEvent:   newBaseEvent("instance.completed", instanceID),
+		InstanceID:  instanceID.String(),
+		FinalState:  finalState,
+		CompletedBy: completedBy.String(),
+		Result:      result,
 	}
 }
 
@@ -312,10 +312,10 @@ func (e *InstanceFailed) Payload() map[string]interface{} {
 // DocumentReclassified is emitted when an instance document type is reclassified (R19).
 type DocumentReclassified struct {
 	BaseEvent
-	InstanceID   string
-	OldType      string
-	NewType      string
-	Reason       string
+	InstanceID     string
+	OldType        string
+	NewType        string
+	Reason         string
 	ReclassifiedBy string
 }
 
@@ -334,12 +334,12 @@ func NewDocumentReclassified(instanceID shared.ID, oldType, newType, reason stri
 // Payload returns the event data as a map.
 func (e *DocumentReclassified) Payload() map[string]interface{} {
 	return map[string]interface{}{
-		"instance_id":      e.InstanceID,
-		"old_type":         e.OldType,
-		"new_type":         e.NewType,
-		"reason":           e.Reason,
-		"reclassified_by":  e.ReclassifiedBy,
-		"occurred_at":      e.OccurredAt(),
+		"instance_id":     e.InstanceID,
+		"old_type":        e.OldType,
+		"new_type":        e.NewType,
+		"reason":          e.Reason,
+		"reclassified_by": e.ReclassifiedBy,
+		"occurred_at":     e.OccurredAt(),
 	}
 }
 

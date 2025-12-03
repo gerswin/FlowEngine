@@ -10,21 +10,61 @@ import (
 // Instance represents a running instance of a workflow.
 // It's the aggregate root for the instance domain.
 type Instance struct {
-	id             shared.ID
-	workflowID     shared.ID
-	workflowName   string
-	currentState   string // State ID
+	id              shared.ID
+	parentID        shared.ID // Parent instance ID (for subprocesses)
+	workflowID      shared.ID
+	workflowName    string
+	currentState    string   // State ID
 	currentSubState SubState // R17: Sub-state support
-	status         Status
-	version        Version // For optimistic locking
-	data           Data
-	variables      Variables
-	transitions    []*Transition
-	domainEvents   []event.DomainEvent // Domain events to be published
-	createdAt      shared.Timestamp
-	updatedAt      shared.Timestamp
-	completedAt    shared.Timestamp
-	startedBy      shared.ID
+	status          Status
+	version         Version // For optimistic locking
+	data            Data
+	variables       Variables
+	transitions     []*Transition
+	domainEvents    []event.DomainEvent // Domain events to be published
+	createdAt       shared.Timestamp
+	updatedAt       shared.Timestamp
+	completedAt     shared.Timestamp
+	startedBy       shared.ID
+}
+
+// RestoreInstance reconstitutes an instance from persistence.
+// This should ONLY be used by repositories.
+func RestoreInstance(
+	id shared.ID,
+	parentID shared.ID,
+	workflowID shared.ID,
+	workflowName string,
+	currentState string,
+	currentSubState SubState,
+	status Status,
+	version Version,
+	data Data,
+	variables Variables,
+	transitions []*Transition,
+	createdAt shared.Timestamp,
+	updatedAt shared.Timestamp,
+	completedAt shared.Timestamp,
+	startedBy shared.ID,
+) *Instance {
+	return &Instance{
+		id:              id,
+		parentID:        parentID,
+		workflowID:      workflowID,
+		workflowName:    workflowName,
+		currentState:    currentState,
+		currentSubState: currentSubState,
+		status:          status,
+		version:         version,
+		data:            data,
+		variables:       variables,
+		transitions:     transitions,
+		domainEvents:    []event.DomainEvent{}, // Restored instances start with no pending events
+		createdAt:       createdAt,
+		updatedAt:       updatedAt,
+		completedAt:     completedAt,
+		startedBy:       startedBy,
+	}
 }
 
 // NewInstance creates a new workflow instance.
@@ -48,19 +88,19 @@ func NewInstance(workflowID shared.ID, workflowName, initialState string, starte
 	now := shared.Now()
 
 	instance := &Instance{
-		id:            shared.NewID(),
-		workflowID:    workflowID,
-		workflowName:  workflowName,
-		currentState:  initialState,
-		status:        StatusRunning,
-		version:       NewVersion(),
-		data:          NewData(),
-		variables:     NewVariables(),
-		transitions:   []*Transition{},
-		domainEvents:  []event.DomainEvent{},
-		createdAt:     now,
-		updatedAt:     now,
-		startedBy:     startedBy,
+		id:           shared.NewID(),
+		workflowID:   workflowID,
+		workflowName: workflowName,
+		currentState: initialState,
+		status:       StatusRunning,
+		version:      NewVersion(),
+		data:         NewData(),
+		variables:    NewVariables(),
+		transitions:  []*Transition{},
+		domainEvents: []event.DomainEvent{},
+		createdAt:    now,
+		updatedAt:    now,
+		startedBy:    startedBy,
 	}
 
 	// Record instance created event
@@ -91,9 +131,27 @@ func NewInstanceWithSubState(workflowID shared.ID, workflowName, initialState st
 	return instance, nil
 }
 
+// NewSubprocess creates a new subprocess instance.
+func NewSubprocess(parentID, workflowID shared.ID, workflowName, initialState string, startedBy shared.ID) (*Instance, error) {
+	instance, err := NewInstance(workflowID, workflowName, initialState, startedBy)
+	if err != nil {
+		return nil, err
+	}
+	if !parentID.IsValid() {
+		return nil, InvalidInstanceError("parent instance ID is invalid")
+	}
+	instance.parentID = parentID
+	return instance, nil
+}
+
 // ID returns the instance ID.
 func (i *Instance) ID() shared.ID {
 	return i.id
+}
+
+// ParentID returns the parent instance ID (if any).
+func (i *Instance) ParentID() shared.ID {
+	return i.parentID
 }
 
 // WorkflowID returns the workflow ID.
@@ -490,10 +548,15 @@ func (i *Instance) Validate() error {
 
 // String returns a string representation of the instance.
 func (i *Instance) String() string {
-	if i.HasSubState() {
-		return fmt.Sprintf("Instance{id=%s, workflow=%s, state=%s.%s, status=%s, version=%s}",
-			i.id.String(), i.workflowName, i.currentState, i.currentSubState.ID(), i.status, i.version.String())
+	parentInfo := ""
+	if i.parentID.IsValid() {
+		parentInfo = fmt.Sprintf(", parent=%s", i.parentID.String())
 	}
-	return fmt.Sprintf("Instance{id=%s, workflow=%s, state=%s, status=%s, version=%s}",
-		i.id.String(), i.workflowName, i.currentState, i.status, i.version.String())
+	
+	if i.HasSubState() {
+		return fmt.Sprintf("Instance{id=%s%s, workflow=%s, state=%s.%s, status=%s, version=%s}",
+			i.id.String(), parentInfo, i.workflowName, i.currentState, i.currentSubState.ID(), i.status, i.version.String())
+	}
+	return fmt.Sprintf("Instance{id=%s%s, workflow=%s, state=%s, status=%s, version=%s}",
+		i.id.String(), parentInfo, i.workflowName, i.currentState, i.status, i.version.String())
 }

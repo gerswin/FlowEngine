@@ -1,0 +1,812 @@
+{
+	"info": {
+		"_postman_id": "flowengine-mintrabajo-2024",
+		"name": "FlowEngine - Flujo MinTrabajo (HU-006)",
+		"description": "Coleccion completa para ejecutar el flujo del Ministerio del Trabajo.\n\n## Proyecto\n- **Cliente:** POSITIVA\n- **Proyecto:** SGDEA DOCUM - POSITIVA\n- **Historia de Usuario:** HU-006_clonacion_de_Procesos_Min_Trabajo\n\n## Como usar esta coleccion\n\n1. Ejecutar primero `01 - Setup / Get Auth Token` para obtener el token de autenticacion\n2. Ejecutar `02 - Setup / Create Workflow from YAML` para cargar el flujo\n3. Seguir el flujo en orden segun el escenario deseado\n\n## Escenarios disponibles\n- **Flujo Principal:** Radicacion -> Asignacion -> Gestion -> Revision -> Aprobacion\n- **Clonacion:** Solicitar informacion a otras areas\n- **Escalamiento:** Solicitar documentos a otras areas\n- **Reclasificacion:** Enviar a otro flujo (PQRD o Entes de Control)",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:8080",
+			"type": "string"
+		},
+		{
+			"key": "authToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "workflowId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "instanceId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "cloneInstanceId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "cloneGroupId",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "01 - Setup",
+			"item": [
+				{
+					"name": "Health Check",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/health",
+							"host": ["{{baseUrl}}"],
+							"path": ["health"]
+						},
+						"description": "Verificar que el servidor esta corriendo correctamente."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Auth Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.token) {",
+									"    pm.collectionVariables.set('authToken', jsonData.token);",
+									"    console.log('Token guardado exitosamente');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/auth/token",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "auth", "token"]
+						},
+						"description": "Obtener token de autenticacion para las llamadas posteriores.\n\n**IMPORTANTE:** Este endpoint es solo para desarrollo/testing."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Workflow from YAML",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.data && jsonData.data.id) {",
+									"    pm.collectionVariables.set('workflowId', jsonData.data.id);",
+									"    console.log('Workflow ID guardado: ' + jsonData.data.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"yaml_content\": \"version: \\\"1.0\\\"\\nworkflow:\\n  name: \\\"Flujo Ministerio del Trabajo\\\"\\n  description: \\\"Flujo completo para tramites del Ministerio del Trabajo - HU-006\\\"\\n  initial_state: \\\"radicado\\\"\\n  states:\\n    - id: radicado\\n      name: Radicado\\n      description: Tramite radicado desde correo electronico\\n    - id: por_asignar\\n      name: Por Asignar\\n      description: En bandeja del asignador\\n      timeout: 24h\\n      on_timeout: timeout_asignacion\\n    - id: en_asignacion\\n      name: En Asignacion\\n      description: Parametrizando tiempos y etapas\\n      timeout: 4h\\n      on_timeout: timeout_asignacion\\n    - id: para_gestion\\n      name: Para Gestion\\n      description: Asignado al abogado gestionador\\n      timeout: 8h\\n      on_timeout: timeout_gestion\\n    - id: en_edicion\\n      name: En Edicion\\n      description: Abogado elaborando documento de salida\\n    - id: por_revisar\\n      name: Por Revisar\\n      description: En bandeja del revisor\\n      timeout: 24h\\n      on_timeout: timeout_revision\\n    - id: revision_rechazada\\n      name: Revision Rechazada\\n      description: Requiere correcciones\\n    - id: revision_aprobada\\n      name: Revision Aprobada\\n      description: Aprobado por revisor\\n    - id: por_aprobar\\n      name: Por Aprobar\\n      description: En bandeja del aprobador\\n      timeout: 24h\\n      on_timeout: timeout_aprobacion\\n    - id: aprobado\\n      name: Aprobado\\n      description: Tramite finalizado\\n      final: true\\n    - id: reclasificado\\n      name: Reclasificado\\n      description: Enviado a otro flujo\\n      final: true\\n    - id: clonacion_asignada\\n      name: Clonacion Asignada\\n      description: Solicitud de clonacion recibida\\n    - id: clonacion_respondida_final\\n      name: Clonacion Respondida\\n      description: Clonado envio respuesta\\n      final: true\\n    - id: clonacion_cancelada\\n      name: Clonacion Cancelada\\n      description: Clonacion anulada\\n      final: true\\n    - id: escalamiento_asignado\\n      name: Escalamiento Asignado\\n      description: Solicitud de escalamiento recibida\\n    - id: escalamiento_respondido_final\\n      name: Escalamiento Respondido\\n      description: Escalado envio documentos\\n      final: true\\n    - id: escalamiento_cancelado\\n      name: Escalamiento Cancelado\\n      description: Escalamiento anulado\\n      final: true\\n  events:\\n    - name: radicar_tramite\\n      from: []\\n      to: radicado\\n    - name: enviar_a_asignador\\n      from: [radicado]\\n      to: por_asignar\\n    - name: iniciar_asignacion\\n      from: [por_asignar]\\n      to: en_asignacion\\n    - name: asignar_abogado\\n      from: [en_asignacion]\\n      to: para_gestion\\n    - name: reclasificar_a_entes_control\\n      from: [por_asignar, en_asignacion]\\n      to: reclasificado\\n    - name: reclasificar_a_pqrd\\n      from: [por_asignar, en_asignacion]\\n      to: reclasificado\\n    - name: iniciar_gestion\\n      from: [para_gestion]\\n      to: en_edicion\\n    - name: solicitar_clonacion\\n      from: [en_edicion]\\n      to: en_edicion\\n    - name: solicitar_escalamiento\\n      from: [en_edicion]\\n      to: en_edicion\\n    - name: enviar_a_revision\\n      from: [en_edicion]\\n      to: por_revisar\\n    - name: aprobar_revision\\n      from: [por_revisar]\\n      to: revision_aprobada\\n    - name: rechazar_revision\\n      from: [por_revisar]\\n      to: revision_rechazada\\n    - name: subsanar_y_reenviar\\n      from: [revision_rechazada]\\n      to: por_revisar\\n    - name: enviar_a_aprobacion\\n      from: [revision_aprobada]\\n      to: por_aprobar\\n    - name: aprobar_tramite\\n      from: [por_aprobar]\\n      to: aprobado\\n    - name: aceptar_clonacion\\n      from: [clonacion_asignada]\\n      to: clonacion_asignada\\n    - name: rechazar_clonacion_por_clonado\\n      from: [clonacion_asignada]\\n      to: clonacion_asignada\\n    - name: responder_clonacion\\n      from: [clonacion_asignada]\\n      to: clonacion_respondida_final\\n    - name: aceptar_escalamiento\\n      from: [escalamiento_asignado]\\n      to: escalamiento_asignado\\n    - name: rechazar_escalamiento_por_escalado\\n      from: [escalamiento_asignado]\\n      to: escalamiento_asignado\\n    - name: responder_escalamiento\\n      from: [escalamiento_asignado]\\n      to: escalamiento_respondido_final\\n    - name: timeout_asignacion\\n      from: [por_asignar, en_asignacion]\\n      to: por_asignar\\n    - name: timeout_gestion\\n      from: [para_gestion]\\n      to: para_gestion\\n    - name: timeout_revision\\n      from: [por_revisar]\\n      to: por_revisar\\n    - name: timeout_aprobacion\\n      from: [por_aprobar]\\n      to: por_aprobar\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/workflows/from-yaml",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "workflows", "from-yaml"]
+						},
+						"description": "Crear el workflow de MinTrabajo desde el YAML.\n\nEste request carga la definicion completa del flujo incluyendo:\n- 17 estados\n- 25+ eventos/transiciones\n- Timeouts configurados"
+					},
+					"response": []
+				},
+				{
+					"name": "List Workflows",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/workflows",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "workflows"]
+						},
+						"description": "Listar todos los workflows disponibles."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Workflow Details",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/workflows/{{workflowId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "workflows", "{{workflowId}}"]
+						},
+						"description": "Ver detalles del workflow de MinTrabajo."
+					},
+					"response": []
+				}
+			],
+			"description": "Requests de configuracion inicial."
+		},
+		{
+			"name": "02 - Flujo Principal",
+			"item": [
+				{
+					"name": "2.1 - Radicar Tramite (Crear Instancia)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.data && jsonData.data.id) {",
+									"    pm.collectionVariables.set('instanceId', jsonData.data.id);",
+									"    console.log('Instance ID guardado: ' + jsonData.data.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"instance\",\n        \"attributes\": {\n            \"workflow_id\": \"{{workflowId}}\",\n            \"started_by\": \"radicador-001\",\n            \"data\": {\n                \"numero_radicado\": \"MT-2024-000001\",\n                \"remitente\": \"Ministerio del Trabajo\",\n                \"remitente_email\": \"notificaciones@mintrabajo.gov.co\",\n                \"asunto\": \"Requerimiento de informacion laboral\",\n                \"fecha_radicacion\": \"2024-12-01T08:30:00Z\",\n                \"fecha_vencimiento\": \"2024-12-15T17:00:00Z\",\n                \"tipo_tramite\": \"requerimiento_informacion\",\n                \"prioridad\": \"alta\",\n                \"descripcion\": \"Solicitud de informacion sobre contratos laborales vigentes\"\n            },\n            \"variables\": {\n                \"tiempo_total_dias\": 10,\n                \"etapa_actual\": \"radicacion\",\n                \"requiere_clonacion\": false,\n                \"rechazos_clonacion_count\": 0,\n                \"rechazos_escalamiento_count\": 0\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances"]
+						},
+						"description": "**ROL:** Radicador\n\nCrear una nueva instancia del tramite de MinTrabajo.\n\nEl tramite inicia en estado `radicado`.\n\n**Datos incluidos:**\n- Numero de radicado\n- Informacion del remitente\n- Fecha de vencimiento\n- Tipo de tramite y prioridad"
+					},
+					"response": []
+				},
+				{
+					"name": "2.2 - Enviar a Asignador",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"enviar_a_asignador\",\n            \"actor_id\": \"radicador-001\",\n            \"reason\": \"Tramite radicado correctamente, enviando a asignacion\",\n            \"metadata\": {\n                \"verificacion_documentos\": true,\n                \"documentos_completos\": true\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Radicador\n\n**Transicion:** radicado -> por_asignar\n\nEl radicador envia el tramite a la bandeja del asignador responsable."
+					},
+					"response": []
+				},
+				{
+					"name": "2.3 - Iniciar Asignacion",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"iniciar_asignacion\",\n            \"actor_id\": \"asignador-001\",\n            \"reason\": \"Iniciando parametrizacion de tiempos y etapas procesales\"\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Asignador Responsable\n\n**Transicion:** por_asignar -> en_asignacion\n\nEl asignador inicia el proceso de parametrizacion:\n- Definir tiempos de gestion\n- Seleccionar etapas procesales\n- Preparar asignacion a abogado"
+					},
+					"response": []
+				},
+				{
+					"name": "2.4 - Asignar Abogado Gestionador",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"asignar_abogado\",\n            \"actor_id\": \"asignador-001\",\n            \"reason\": \"Asignando tramite al abogado gestionador\",\n            \"data\": {\n                \"abogado_gestionador_id\": \"abogado-gestionador-001\",\n                \"abogado_gestionador_nombre\": \"Dr. Juan Perez\",\n                \"tiempo_gestion\": \"5d\",\n                \"etapas_procesales\": [\"analisis\", \"elaboracion\", \"revision\"],\n                \"instrucciones\": \"Revisar contratos laborales y preparar respuesta\"\n            },\n            \"metadata\": {\n                \"fecha_asignacion\": \"2024-12-01T10:00:00Z\",\n                \"fecha_limite_gestion\": \"2024-12-06T17:00:00Z\"\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Asignador Responsable\n\n**Transicion:** en_asignacion -> para_gestion\n\nEl asignador completa la parametrizacion y asigna el tramite a un abogado gestionador especifico.\n\n**Datos requeridos:**\n- ID del abogado gestionador\n- Tiempo de gestion asignado\n- Etapas procesales\n- Instrucciones especiales"
+					},
+					"response": []
+				},
+				{
+					"name": "2.5 - Iniciar Gestion",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"iniciar_gestion\",\n            \"actor_id\": \"abogado-gestionador-001\",\n            \"reason\": \"Iniciando elaboracion del documento de respuesta\"\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Abogado Gestionador\n\n**Transicion:** para_gestion -> en_edicion\n\nEl abogado gestionador acepta el tramite e inicia la elaboracion del documento de salida.\n\nA partir de este punto puede:\n- Solicitar clonacion\n- Solicitar escalamiento\n- Enviar a revision"
+					},
+					"response": []
+				},
+				{
+					"name": "2.6 - Enviar a Revision",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"enviar_a_revision\",\n            \"actor_id\": \"abogado-gestionador-001\",\n            \"reason\": \"Documento de respuesta listo para revision\",\n            \"data\": {\n                \"documento_salida\": \"DOC-SALIDA-2024-001\",\n                \"abogado_revisor_id\": \"abogado-revisor-001\",\n                \"abogado_aprobador_id\": \"abogado-aprobador-001\",\n                \"resumen_respuesta\": \"Se adjunta informacion de contratos laborales solicitada\"\n            },\n            \"metadata\": {\n                \"paginas_documento\": 15,\n                \"anexos\": 3\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Abogado Gestionador\n\n**Transicion:** en_edicion -> por_revisar\n\nEl abogado gestionador envia el documento elaborado al revisor.\n\n**Datos requeridos:**\n- ID del documento de salida\n- ID del revisor asignado\n- ID del aprobador asignado"
+					},
+					"response": []
+				},
+				{
+					"name": "2.7 - Aprobar Revision",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"aprobar_revision\",\n            \"actor_id\": \"abogado-revisor-001\",\n            \"reason\": \"Documento revisado y aprobado\",\n            \"feedback\": \"El documento cumple con todos los requisitos de forma y fondo.\",\n            \"metadata\": {\n                \"fecha_revision\": \"2024-12-05T14:00:00Z\",\n                \"observaciones\": \"Excelente trabajo\"\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Abogado Revisor\n\n**Transicion:** por_revisar -> revision_aprobada\n\nEl revisor aprueba el documento de salida."
+					},
+					"response": []
+				},
+				{
+					"name": "2.8 - Enviar a Aprobacion",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"enviar_a_aprobacion\",\n            \"actor_id\": \"abogado-gestionador-001\",\n            \"reason\": \"Enviando a aprobacion final\"\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Abogado Gestionador\n\n**Transicion:** revision_aprobada -> por_aprobar\n\nEl gestionador envia el documento aprobado por el revisor al aprobador final."
+					},
+					"response": []
+				},
+				{
+					"name": "2.9 - Aprobar Tramite (Finalizar)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"aprobar_tramite\",\n            \"actor_id\": \"abogado-aprobador-001\",\n            \"reason\": \"Tramite aprobado y respuesta enviada al Ministerio del Trabajo\",\n            \"data\": {\n                \"documento_salida\": \"DOC-SALIDA-2024-001\",\n                \"numero_respuesta\": \"RESP-MT-2024-001\",\n                \"fecha_envio_respuesta\": \"2024-12-06T16:00:00Z\"\n            },\n            \"feedback\": \"Respuesta enviada exitosamente al remitente.\",\n            \"metadata\": {\n                \"medio_envio\": \"correo_electronico\",\n                \"confirmacion_entrega\": true\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Abogado Aprobador\n\n**Transicion:** por_aprobar -> aprobado (FINAL)\n\nEl aprobador da el visto bueno final y el sistema envia la respuesta al remitente.\n\n**Este es el estado final del flujo principal.**"
+					},
+					"response": []
+				}
+			],
+			"description": "Flujo principal completo desde radicacion hasta aprobacion final."
+		},
+		{
+			"name": "03 - Flujo con Rechazo de Revision",
+			"item": [
+				{
+					"name": "3.1 - Rechazar Revision",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"rechazar_revision\",\n            \"actor_id\": \"abogado-revisor-001\",\n            \"reason\": \"El documento requiere correcciones\",\n            \"feedback\": \"Por favor corregir:\\n1. Formato de fechas incorrecto en pagina 5\\n2. Falta firma del representante legal\\n3. Revisar ortografia en seccion de conclusiones\",\n            \"data\": {\n                \"comentarios_rechazo\": \"Se requieren correcciones menores antes de aprobar\",\n                \"secciones_a_corregir\": [\"pagina_5\", \"firma\", \"conclusiones\"]\n            },\n            \"metadata\": {\n                \"fecha_rechazo\": \"2024-12-05T14:00:00Z\",\n                \"prioridad_correccion\": \"media\"\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Abogado Revisor\n\n**Transicion:** por_revisar -> revision_rechazada\n\nEl revisor encuentra problemas en el documento y lo devuelve al gestionador con comentarios.\n\n**Nota:** Usar este request cuando la instancia este en estado `por_revisar`."
+					},
+					"response": []
+				},
+				{
+					"name": "3.2 - Subsanar y Reenviar",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"subsanar_y_reenviar\",\n            \"actor_id\": \"abogado-gestionador-001\",\n            \"reason\": \"Correcciones realizadas, reenviando a revision\",\n            \"feedback\": \"Se realizaron las siguientes correcciones:\\n1. Formato de fechas corregido\\n2. Se agrego firma del representante legal\\n3. Ortografia revisada y corregida\",\n            \"data\": {\n                \"documento_salida\": \"DOC-SALIDA-2024-001-v2\",\n                \"version_documento\": 2\n            },\n            \"metadata\": {\n                \"fecha_correccion\": \"2024-12-05T16:00:00Z\",\n                \"cambios_realizados\": true\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Abogado Gestionador\n\n**Transicion:** revision_rechazada -> por_revisar\n\nEl gestionador realiza las correcciones solicitadas y reenvia el documento a revision.\n\n**Nota:** Usar este request cuando la instancia este en estado `revision_rechazada`."
+					},
+					"response": []
+				}
+			],
+			"description": "Escenario alternativo cuando el revisor rechaza el documento."
+		},
+		{
+			"name": "04 - Proceso de Clonacion (HU-006)",
+			"item": [
+				{
+					"name": "4.1 - Solicitar Clonacion",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.data && jsonData.data.id) {",
+									"    pm.collectionVariables.set('cloneGroupId', jsonData.data.id);",
+									"    console.log('Clone Group ID guardado: ' + jsonData.data.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"clone-request\",\n        \"attributes\": {\n            \"assignees\": [\n                {\n                    \"user_id\": \"abogado-clonado-001\",\n                    \"office_id\": \"oficina-juridica\"\n                },\n                {\n                    \"user_id\": \"abogado-clonado-002\",\n                    \"office_id\": \"oficina-rrhh\"\n                }\n            ],\n            \"consolidator_id\": \"abogado-gestionador-001\",\n            \"reason\": \"Se requiere informacion de contratos laborales de las areas Juridica y RRHH para completar la respuesta al Ministerio del Trabajo.\",\n            \"timeout_duration\": \"3d\",\n            \"metadata\": {\n                \"documentos_solicitados\": [\n                    \"Listado de contratos vigentes\",\n                    \"Estadisticas de contratacion\"\n                ],\n                \"urgencia\": \"alta\",\n                \"observaciones\": \"Por favor incluir informacion del ultimo trimestre\"\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}/clone",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}", "clone"]
+						},
+						"description": "**ROL:** Abogado Gestionador\n\n**Accion:** Solicitar clonacion a multiples areas\n\nSegun HU-006, el gestionador puede solicitar informacion a multiples dependencias en paralelo.\n\n**Reglas de Negocio:**\n- RN-01: Seleccion de usuarios por oficina\n- RN-02: Tiempo de clonacion no puede ser >= tiempo del tramite principal\n- RN-04: Observaciones obligatorias\n\n**En este ejemplo:**\n- Se clona a 2 usuarios de diferentes oficinas\n- Timeout de 3 dias\n- Motivo detallado incluido"
+					},
+					"response": []
+				},
+				{
+					"name": "4.2 - Aceptar Clonacion (Usuario Clonado)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"aceptar_clonacion\",\n            \"actor_id\": \"abogado-clonado-001\",\n            \"reason\": \"Acepto la solicitud de clonacion\",\n            \"metadata\": {\n                \"fecha_aceptacion\": \"2024-12-02T09:00:00Z\"\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{cloneInstanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{cloneInstanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Gestionador Clonado\n\n**Transicion:** clonacion_asignada (pendiente) -> clonacion_asignada (en_proceso)\n\nEl usuario clonado acepta la solicitud de clonacion.\n\nSegun RN-07: Al aceptar se habilita la opcion de responder."
+					},
+					"response": []
+				},
+				{
+					"name": "4.3 - Rechazar Clonacion (Usuario Clonado)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"rechazar_clonacion_por_clonado\",\n            \"actor_id\": \"abogado-clonado-001\",\n            \"reason\": \"No cuento con la informacion solicitada\",\n            \"data\": {\n                \"motivo_rechazo\": \"La informacion solicitada no corresponde a mi area de responsabilidad\"\n            },\n            \"metadata\": {\n                \"fecha_rechazo\": \"2024-12-02T09:00:00Z\",\n                \"numero_rechazo\": 1\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{cloneInstanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{cloneInstanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Gestionador Clonado\n\n**Accion:** Rechazar clonacion\n\nSegun RN-06:\n- Maximo 2 rechazos por usuario\n- Motivo obligatorio\n- Despues del 2do rechazo, si se reasigna, el usuario no puede rechazar\n\n**Nota:** Este request incrementa el contador de rechazos."
+					},
+					"response": []
+				},
+				{
+					"name": "4.4 - Responder Clonacion",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"responder_clonacion\",\n            \"actor_id\": \"abogado-clonado-001\",\n            \"reason\": \"Respuesta a solicitud de clonacion\",\n            \"data\": {\n                \"respuesta_clonacion\": \"Adjunto la informacion solicitada sobre contratos laborales vigentes del area Juridica.\\n\\nResumen:\\n- Total contratos vigentes: 150\\n- Contratos nuevos ultimo trimestre: 25\\n- Renovaciones: 12\",\n                \"documentos_adjuntos\": [\n                    {\n                        \"nombre\": \"Listado_Contratos_Q4_2024.xlsx\",\n                        \"tipo\": \"de_gestion\",\n                        \"fecha_cargue\": \"2024-12-03T10:00:00Z\"\n                    },\n                    {\n                        \"nombre\": \"Estadisticas_Contratacion.pdf\",\n                        \"tipo\": \"de_gestion\",\n                        \"fecha_cargue\": \"2024-12-03T10:05:00Z\"\n                    }\n                ]\n            },\n            \"metadata\": {\n                \"fecha_respuesta\": \"2024-12-03T10:10:00Z\",\n                \"tiempo_gestion_horas\": 24\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{cloneInstanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{cloneInstanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Gestionador Clonado\n\n**Transicion:** clonacion_asignada (en_proceso) -> clonacion_respondida_final\n\nEl usuario clonado envia su respuesta con documentos adjuntos.\n\nSegun RN-08:\n- Solo puede responder despues de aceptar\n- Campo de observaciones permite texto + imagenes\n- Puede responder incluso despues de vencimiento"
+					},
+					"response": []
+				}
+			],
+			"description": "Proceso completo de clonacion segun HU-006.\n\nEl gestionador puede solicitar informacion a multiples dependencias en paralelo."
+		},
+		{
+			"name": "05 - Reclasificacion",
+			"item": [
+				{
+					"name": "5.1 - Reclasificar a PQRD",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"reclasificar_a_pqrd\",\n            \"actor_id\": \"asignador-001\",\n            \"reason\": \"El tramite corresponde al flujo de PQRD, no a MinTrabajo\",\n            \"data\": {\n                \"motivo_reclasificacion\": \"Despues de analizar el contenido, se determina que es una peticion general y no un requerimiento del Ministerio del Trabajo\",\n                \"flujo_destino\": \"PQRD\",\n                \"tipo_pqrd\": \"peticion\"\n            },\n            \"metadata\": {\n                \"fecha_reclasificacion\": \"2024-12-01T11:00:00Z\"\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Asignador Responsable\n\n**Transicion:** por_asignar/en_asignacion -> reclasificado (FINAL)\n\nEl asignador determina que el tramite no corresponde al flujo de MinTrabajo y lo envia al flujo de PQRD.\n\n**Nota:** Usar cuando la instancia este en estado `por_asignar` o `en_asignacion`."
+					},
+					"response": []
+				},
+				{
+					"name": "5.2 - Reclasificar a Entes de Control",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"data\": {\n        \"type\": \"transition\",\n        \"attributes\": {\n            \"event\": \"reclasificar_a_entes_control\",\n            \"actor_id\": \"asignador-001\",\n            \"reason\": \"El tramite corresponde a un ente de control diferente\",\n            \"data\": {\n                \"motivo_reclasificacion\": \"El requerimiento proviene de la Contraloria, no del Ministerio del Trabajo\",\n                \"flujo_destino\": \"Entes de Control\",\n                \"ente_control\": \"Contraloria General\"\n            },\n            \"metadata\": {\n                \"fecha_reclasificacion\": \"2024-12-01T11:00:00Z\"\n            }\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}/transitions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}", "transitions"]
+						},
+						"description": "**ROL:** Asignador Responsable\n\n**Transicion:** por_asignar/en_asignacion -> reclasificado (FINAL)\n\nEl asignador determina que el tramite corresponde a otro ente de control.\n\n**Nota:** Usar cuando la instancia este en estado `por_asignar` o `en_asignacion`."
+					},
+					"response": []
+				}
+			],
+			"description": "Escenarios de reclasificacion a otros flujos."
+		},
+		{
+			"name": "06 - Consultas",
+			"item": [
+				{
+					"name": "Ver Estado de Instancia",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances/{{instanceId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances", "{{instanceId}}"]
+						},
+						"description": "Consultar el estado actual de una instancia."
+					},
+					"response": []
+				},
+				{
+					"name": "Listar Todas las Instancias",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances"]
+						},
+						"description": "Listar todas las instancias del sistema."
+					},
+					"response": []
+				},
+				{
+					"name": "Listar Instancias por Workflow",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances?filter[workflow_id]={{workflowId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances"],
+							"query": [
+								{
+									"key": "filter[workflow_id]",
+									"value": "{{workflowId}}"
+								}
+							]
+						},
+						"description": "Listar instancias filtradas por workflow."
+					},
+					"response": []
+				},
+				{
+					"name": "Listar Instancias con Paginacion",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/instances?page[number]=1&page[size]=10",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "v1", "instances"],
+							"query": [
+								{
+									"key": "page[number]",
+									"value": "1"
+								},
+								{
+									"key": "page[size]",
+									"value": "10"
+								}
+							]
+						},
+						"description": "Listar instancias con paginacion JSON:API."
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints de consulta y listado."
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{authToken}}",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	]
+}

@@ -1,0 +1,858 @@
+version: "1.0"
+
+# ==============================================================================
+# INFORMACION DEL PROYECTO
+# ==============================================================================
+# Empresa cliente:        POSITIVA
+# Nombre de proyecto:     SGDEA DOCUM - POSITIVA
+# Nombre del requerimiento: Gestion de Tramites Ministerio del Trabajo
+#
+# Versionamiento:
+# -------------------------------------------------------------------------------
+# Version | Descripcion                    | Autor               | Fecha
+# -------------------------------------------------------------------------------
+# 1.0     | Construccion inicial           | FlowEngine          | 01/12/2024
+# ==============================================================================
+
+workflow:
+  id: "gestion_tramites_mintrabajo"
+  name: "Gestion Tramites MinTrabajo"
+  description: |
+    Flujo de gestion de tramites del Ministerio del Trabajo.
+
+    Incluye las siguientes fases:
+    - Asignacion: Asignador asigna tramites a gestionadores
+    - Gestion: Gestionador edita y elabora respuesta
+    - Clonacion (Flujo Alterno): Solicitud paralela a otras areas
+    - Escalamiento (Flujo Alterno): Escalamiento paralelo a otras areas
+    - Revision: Revisor valida el documento
+    - Aprobacion: Aprobador aprueba el tramite
+    - Envio: Correspondencia fisica via Courier o Mensajero
+    - Publicacion: Publicacion web por 2da devolucion
+
+    CARACTERISTICAS:
+    - Clonacion y Escalamiento pueden ocurrir en paralelo
+    - Multiples clonaciones/escalamientos simultaneos
+    - Courier y Mensajero son canales excluyentes
+    - 2da devolucion automaticamente va a publicacion
+    - SLA configurable por usuario
+
+  initial_state: "por_asignar"
+
+  # ============================================================================
+  # CONFIGURACION SLA
+  # ============================================================================
+  # Los tiempos son configurables por el usuario de manera manual
+  sla:
+    default_days: 15
+    business_hours:
+      start: "08:00"
+      end: "17:00"
+    timezone: "America/Bogota"
+    user_configurable: true
+
+  # ============================================================================
+  # ESTADOS
+  # ============================================================================
+  states:
+    # ==========================================================================
+    # FASE: ASIGNACION
+    # ==========================================================================
+    - id: por_asignar
+      name: Por Asignar
+      description: Estado en el cual queda el radicado despues de generar la radicacion
+      phase: asignacion
+      allowed_roles:
+        - asignador
+      metadata:
+        color: "#3498db"
+        icon: "inbox"
+
+    - id: en_asignacion
+      name: En Asignacion
+      description: Estado en el cual el asignador se encuentra realizando la accion de asignacion
+      phase: asignacion
+      allowed_roles:
+        - asignador
+      metadata:
+        color: "#9b59b6"
+        icon: "user-plus"
+
+    # ==========================================================================
+    # FASE: GESTION
+    # ==========================================================================
+    - id: para_gestion
+      name: Para Gestion
+      description: Estado en el cual llega el tramite a la bandeja del gestionador asignado
+      phase: gestion
+      allowed_roles:
+        - gestionador
+      metadata:
+        color: "#f39c12"
+        icon: "briefcase"
+
+    - id: en_edicion
+      name: En Edicion
+      description: Cuando el tramite ha sido aceptado por el gestionador y se procede a la edicion
+      phase: gestion
+      allowed_roles:
+        - gestionador
+      substates:
+        # --- Subestados de Clonacion ---
+        - id: clonacion_asignada
+          name: Clonacion Asignada
+          description: Clonacion creada y asignada al area clonada
+        - id: clonacion_aceptada
+          name: Clonacion Aceptada
+          description: El usuario clonado confirmo que gestionara la clonacion
+        - id: clonacion_en_edicion
+          name: Clonacion en Edicion
+          description: El usuario clonado esta editando la respuesta
+        - id: clonacion_respondida
+          name: Clonacion Respondida
+          description: El usuario clonado termino y envio su respuesta
+        - id: clonacion_rechazada
+          name: Clonacion Rechazada
+          description: El usuario clonado rechazo la clonacion
+        - id: clonacion_anulada
+          name: Clonacion Anulada
+          description: El gestionador anulo la clonacion
+        - id: parrafo_rechazado
+          name: Parrafo Rechazado
+          description: El gestionador rechazo la respuesta del clonado
+        # --- Subestados de Escalamiento ---
+        - id: escalamiento_asignado
+          name: Escalamiento Asignado
+          description: Escalamiento creado y asignado al area escalada
+        - id: escalamiento_aceptado
+          name: Escalamiento Aceptado
+          description: El usuario escalado confirmo que gestionara el escalamiento
+        - id: escalamiento_en_edicion
+          name: Escalamiento en Edicion
+          description: El usuario escalado esta adjuntando la respuesta
+        - id: escalamiento_respondido
+          name: Escalamiento Respondido
+          description: El usuario escalado termino y envio su respuesta
+        - id: escalamiento_rechazado
+          name: Escalamiento Rechazado
+          description: El usuario escalado rechazo el escalamiento
+        - id: escalamiento_anulado
+          name: Escalamiento Anulado
+          description: El gestionador anulo el escalamiento
+      metadata:
+        color: "#e67e22"
+        icon: "edit"
+
+    # ==========================================================================
+    # FASE: REVISION
+    # ==========================================================================
+    - id: por_revisar
+      name: Por Revisar
+      description: Estado que toma el tramite cuando se realiza el envio a revision
+      phase: revision
+      allowed_roles:
+        - revisor
+      metadata:
+        color: "#1abc9c"
+        icon: "search"
+
+    - id: revision_rechazada
+      name: Revision Rechazada
+      description: Estado cuando el revisor realiza el rechazo de la revision
+      phase: gestion
+      allowed_roles:
+        - gestionador
+      metadata:
+        color: "#e74c3c"
+        icon: "times-circle"
+
+    # ==========================================================================
+    # FASE: APROBACION
+    # ==========================================================================
+    - id: por_aprobar
+      name: Por Aprobar
+      description: Estado que toma el tramite cuando se realiza el envio a aprobacion
+      phase: aprobacion
+      allowed_roles:
+        - aprobador
+      metadata:
+        color: "#27ae60"
+        icon: "check-circle"
+
+    - id: aprobacion_rechazada
+      name: Aprobacion Rechazada
+      description: Estado cuando el aprobador rechaza la aprobacion del caso
+      phase: gestion
+      allowed_roles:
+        - gestionador
+      metadata:
+        color: "#c0392b"
+        icon: "ban"
+
+    - id: aprobado
+      name: Aprobado
+      description: Estado cuando ya se encuentra aprobado y se genero el radicado de salida
+      phase: gestion
+      final: true
+      allowed_roles:
+        - gestionador
+      metadata:
+        color: "#2ecc71"
+        icon: "check-double"
+
+    # ==========================================================================
+    # FASE: ENVIO Y CORRESPONDENCIA
+    # ==========================================================================
+    - id: devolucion
+      name: Devolucion
+      description: Estado cuando se realiza la devolucion por no entrega exitosa
+      phase: envio
+      allowed_roles:
+        - gestionador
+      metadata:
+        color: "#e74c3c"
+        icon: "undo"
+
+    - id: por_recibir_correspondencia
+      name: Por Recibir en Correspondencia
+      description: Estado cuando se envio la solicitud o el remitente es envio fisico
+      phase: envio
+      allowed_roles:
+        - seguimiento_envio
+      metadata:
+        color: "#95a5a6"
+        icon: "mailbox"
+
+    - id: por_enviar_courier
+      name: Por Enviar a Courier
+      description: Pendiente para entrega a proveedor de envio Courier
+      phase: envio
+      allowed_roles:
+        - seguimiento_envio
+      metadata:
+        color: "#3498db"
+        icon: "truck"
+
+    - id: por_enviar_mensajero
+      name: Por Enviar a Mensajero
+      description: Pendiente para entrega a proveedor de envio Mensajero
+      phase: envio
+      allowed_roles:
+        - seguimiento_envio
+      metadata:
+        color: "#2980b9"
+        icon: "motorcycle"
+
+    - id: enviado_courier
+      name: Enviado a Courier
+      description: Estado cuando se entrego la informacion al proveedor Courier
+      phase: envio
+      allowed_roles:
+        - seguimiento_envio
+      metadata:
+        color: "#1abc9c"
+        icon: "shipping-fast"
+
+    - id: enviado_mensajeria
+      name: Enviado a Mensajeria
+      description: Estado cuando se entrego la informacion al proveedor Mensajeria
+      phase: envio
+      allowed_roles:
+        - seguimiento_envio
+      metadata:
+        color: "#16a085"
+        icon: "paper-plane"
+
+    - id: entrega_exitosa
+      name: Entrega Exitosa
+      description: Estado cuando se realiza la entrega exitosa de la documentacion
+      phase: gestion
+      final: true
+      allowed_roles:
+        - gestionador
+      metadata:
+        color: "#27ae60"
+        icon: "check-circle"
+
+    # ==========================================================================
+    # FASE: PUBLICACION (2da Devolucion)
+    # ==========================================================================
+    - id: por_publicar
+      name: Por Publicar
+      description: Estado cuando sucede la 2da devolucion y se procede a publicacion
+      phase: publicacion
+      allowed_roles:
+        - publicador
+      metadata:
+        color: "#9b59b6"
+        icon: "globe"
+
+    - id: publicado
+      name: Publicado
+      description: Estado cuando el tramite se encuentra publicado en la pagina web
+      phase: publicacion
+      final: true
+      allowed_roles:
+        - publicador
+      metadata:
+        color: "#8e44ad"
+        icon: "check-square"
+
+  # ============================================================================
+  # EVENTOS (TRANSICIONES)
+  # ============================================================================
+  events:
+    # ==========================================================================
+    # FASE: ASIGNACION
+    # ==========================================================================
+    - id: iniciar_asignacion
+      name: Iniciar Asignacion
+      description: El asignador inicia el proceso de asignacion
+      from:
+        - por_asignar
+      to: en_asignacion
+      allowed_roles:
+        - asignador
+
+    - id: asignar_gestionador
+      name: Asignar Gestionador
+      description: El asignador asigna el tramite a un gestionador
+      from:
+        - en_asignacion
+      to: para_gestion
+      allowed_roles:
+        - asignador
+      required_fields:
+        - gestionador_id
+
+    # ==========================================================================
+    # FASE: GESTION
+    # ==========================================================================
+    - id: aceptar_gestion
+      name: Aceptar Gestion
+      description: El gestionador acepta el tramite para gestion
+      from:
+        - para_gestion
+      to: en_edicion
+      allowed_roles:
+        - gestionador
+
+    - id: enviar_a_revision
+      name: Enviar a Revision
+      description: El gestionador envia el tramite a revision
+      from:
+        - en_edicion
+      to: por_revisar
+      allowed_roles:
+        - gestionador
+
+    # ==========================================================================
+    # FASE: REVISION
+    # ==========================================================================
+    - id: aprobar_revision
+      name: Aprobar Revision
+      description: El revisor aprueba la revision del tramite
+      from:
+        - por_revisar
+      to: por_aprobar
+      allowed_roles:
+        - revisor
+
+    - id: rechazar_revision
+      name: Rechazar Revision
+      description: El revisor rechaza la revision del tramite
+      from:
+        - por_revisar
+      to: revision_rechazada
+      allowed_roles:
+        - revisor
+      required_fields:
+        - motivo_rechazo
+
+    - id: corregir_revision
+      name: Corregir Revision
+      description: El gestionador corrige el tramite rechazado
+      from:
+        - revision_rechazada
+      to: en_edicion
+      allowed_roles:
+        - gestionador
+
+    # ==========================================================================
+    # FASE: APROBACION
+    # ==========================================================================
+    - id: aprobar_tramite
+      name: Aprobar Tramite
+      description: El aprobador aprueba el tramite
+      from:
+        - por_aprobar
+      to: aprobado
+      allowed_roles:
+        - aprobador
+
+    - id: rechazar_aprobacion
+      name: Rechazar Aprobacion
+      description: El aprobador rechaza el tramite
+      from:
+        - por_aprobar
+      to: aprobacion_rechazada
+      allowed_roles:
+        - aprobador
+      required_fields:
+        - motivo_rechazo
+
+    - id: corregir_aprobacion
+      name: Corregir Aprobacion
+      description: El gestionador corrige el tramite con aprobacion rechazada
+      from:
+        - aprobacion_rechazada
+      to: en_edicion
+      allowed_roles:
+        - gestionador
+
+    # ==========================================================================
+    # FASE: ENVIO
+    # ==========================================================================
+    - id: enviar_correspondencia
+      name: Enviar a Correspondencia
+      description: Enviar el tramite aprobado a correspondencia
+      from:
+        - aprobado
+      to: por_recibir_correspondencia
+      allowed_roles:
+        - gestionador
+
+    - id: recibir_para_courier
+      name: Recibir para Courier
+      description: Recibir documentacion para envio por Courier
+      from:
+        - por_recibir_correspondencia
+      to: por_enviar_courier
+      allowed_roles:
+        - seguimiento_envio
+
+    - id: recibir_para_mensajero
+      name: Recibir para Mensajero
+      description: Recibir documentacion para envio por Mensajero
+      from:
+        - por_recibir_correspondencia
+      to: por_enviar_mensajero
+      allowed_roles:
+        - seguimiento_envio
+
+    - id: entregar_courier
+      name: Entregar a Courier
+      description: Entregar la documentacion al proveedor Courier
+      from:
+        - por_enviar_courier
+      to: enviado_courier
+      allowed_roles:
+        - seguimiento_envio
+
+    - id: entregar_mensajero
+      name: Entregar a Mensajero
+      description: Entregar la documentacion al proveedor Mensajero
+      from:
+        - por_enviar_mensajero
+      to: enviado_mensajeria
+      allowed_roles:
+        - seguimiento_envio
+
+    - id: confirmar_entrega_courier
+      name: Confirmar Entrega Courier
+      description: Confirmar la entrega exitosa por Courier
+      from:
+        - enviado_courier
+      to: entrega_exitosa
+      allowed_roles:
+        - seguimiento_envio
+
+    - id: confirmar_entrega_mensajeria
+      name: Confirmar Entrega Mensajeria
+      description: Confirmar la entrega exitosa por Mensajeria
+      from:
+        - enviado_mensajeria
+      to: entrega_exitosa
+      allowed_roles:
+        - seguimiento_envio
+
+    # ==========================================================================
+    # DEVOLUCION
+    # ==========================================================================
+    - id: registrar_devolucion
+      name: Registrar Devolucion
+      description: Registrar devolucion por no entrega exitosa (1ra devolucion)
+      from:
+        - enviado_courier
+        - enviado_mensajeria
+      to: devolucion
+      allowed_roles:
+        - seguimiento_envio
+
+    - id: reintentar_envio
+      name: Reintentar Envio
+      description: Reintentar el envio despues de devolucion
+      from:
+        - devolucion
+      to: por_recibir_correspondencia
+      allowed_roles:
+        - gestionador
+
+    - id: publicar_devolucion
+      name: Publicar por 2da Devolucion
+      description: Enviar a publicacion por segunda devolucion
+      from:
+        - devolucion
+      to: por_publicar
+      allowed_roles:
+        - gestionador
+
+    # ==========================================================================
+    # PUBLICACION
+    # ==========================================================================
+    - id: publicar_tramite
+      name: Publicar Tramite
+      description: Publicar el tramite en la pagina web
+      from:
+        - por_publicar
+      to: publicado
+      allowed_roles:
+        - publicador
+
+    # ==========================================================================
+    # CLONACION (Subestados de en_edicion)
+    # ==========================================================================
+    - id: crear_clonacion
+      name: Crear Clonacion
+      description: El gestionador crea una solicitud de clonacion a otra area
+      from:
+        - en_edicion
+      to: en_edicion
+      substate_to: clonacion_asignada
+      allowed_roles:
+        - gestionador
+      creates_subflow: true
+      required_fields:
+        - area_destino
+        - descripcion_solicitud
+
+    - id: asignar_clonacion
+      name: Asignar Clonacion
+      description: El asignador del area clonada asigna a un gestionador
+      from:
+        - en_edicion
+      substate_from: clonacion_asignada
+      to: en_edicion
+      substate_to: clonacion_aceptada
+      allowed_roles:
+        - asignador_clonacion
+      required_fields:
+        - gestionador_clonado_id
+
+    - id: rechazar_clonacion
+      name: Rechazar Clonacion
+      description: El gestionador clonado rechaza la clonacion
+      from:
+        - en_edicion
+      substate_from:
+        - clonacion_asignada
+        - clonacion_aceptada
+      to: en_edicion
+      substate_to: clonacion_rechazada
+      allowed_roles:
+        - gestionador_clonado
+      required_fields:
+        - motivo_rechazo
+
+    - id: iniciar_edicion_clonacion
+      name: Iniciar Edicion Clonacion
+      description: El gestionador clonado inicia la edicion de la respuesta
+      from:
+        - en_edicion
+      substate_from: clonacion_aceptada
+      to: en_edicion
+      substate_to: clonacion_en_edicion
+      allowed_roles:
+        - gestionador_clonado
+
+    - id: enviar_respuesta_clonacion
+      name: Enviar Respuesta Clonacion
+      description: El gestionador clonado envia su respuesta
+      from:
+        - en_edicion
+      substate_from: clonacion_en_edicion
+      to: en_edicion
+      substate_to: clonacion_respondida
+      allowed_roles:
+        - gestionador_clonado
+      required_fields:
+        - respuesta_clonacion
+
+    - id: anular_clonacion
+      name: Anular Clonacion
+      description: El gestionador anula la clonacion en cualquier momento
+      from:
+        - en_edicion
+      substate_from:
+        - clonacion_asignada
+        - clonacion_aceptada
+        - clonacion_en_edicion
+        - clonacion_respondida
+        - clonacion_rechazada
+      to: en_edicion
+      substate_to: clonacion_anulada
+      allowed_roles:
+        - gestionador
+
+    - id: rechazar_parrafo
+      name: Rechazar Parrafo
+      description: El gestionador rechaza la respuesta del clonado
+      from:
+        - en_edicion
+      substate_from: clonacion_respondida
+      to: en_edicion
+      substate_to: parrafo_rechazado
+      allowed_roles:
+        - gestionador
+      required_fields:
+        - motivo_rechazo
+
+    - id: reenviar_clonacion
+      name: Reenviar Clonacion
+      description: Reenviar la clonacion despues de rechazo de parrafo
+      from:
+        - en_edicion
+      substate_from: parrafo_rechazado
+      to: en_edicion
+      substate_to: clonacion_en_edicion
+      allowed_roles:
+        - gestionador_clonado
+
+    - id: consolidar_clonacion
+      name: Consolidar Clonacion
+      description: El gestionador acepta y consolida la respuesta de la clonacion
+      from:
+        - en_edicion
+      substate_from: clonacion_respondida
+      to: en_edicion
+      allowed_roles:
+        - gestionador
+      closes_subflow: true
+
+    # ==========================================================================
+    # ESCALAMIENTO (Subestados de en_edicion)
+    # ==========================================================================
+    - id: crear_escalamiento
+      name: Crear Escalamiento
+      description: El gestionador crea una solicitud de escalamiento a otra area
+      from:
+        - en_edicion
+      to: en_edicion
+      substate_to: escalamiento_asignado
+      allowed_roles:
+        - gestionador
+      creates_subflow: true
+      required_fields:
+        - area_destino
+        - descripcion_solicitud
+
+    - id: asignar_escalamiento
+      name: Asignar Escalamiento
+      description: El asignador del area escalada asigna a un gestionador
+      from:
+        - en_edicion
+      substate_from: escalamiento_asignado
+      to: en_edicion
+      substate_to: escalamiento_aceptado
+      allowed_roles:
+        - asignador_escalamiento
+      required_fields:
+        - gestionador_escalado_id
+
+    - id: rechazar_escalamiento
+      name: Rechazar Escalamiento
+      description: El gestionador escalado rechaza el escalamiento
+      from:
+        - en_edicion
+      substate_from:
+        - escalamiento_asignado
+        - escalamiento_aceptado
+      to: en_edicion
+      substate_to: escalamiento_rechazado
+      allowed_roles:
+        - gestionador_escalado
+      required_fields:
+        - motivo_rechazo
+
+    - id: iniciar_edicion_escalamiento
+      name: Iniciar Edicion Escalamiento
+      description: El gestionador escalado inicia la edicion de la respuesta
+      from:
+        - en_edicion
+      substate_from: escalamiento_aceptado
+      to: en_edicion
+      substate_to: escalamiento_en_edicion
+      allowed_roles:
+        - gestionador_escalado
+
+    - id: enviar_respuesta_escalamiento
+      name: Enviar Respuesta Escalamiento
+      description: El gestionador escalado envia su respuesta
+      from:
+        - en_edicion
+      substate_from: escalamiento_en_edicion
+      to: en_edicion
+      substate_to: escalamiento_respondido
+      allowed_roles:
+        - gestionador_escalado
+      required_fields:
+        - respuesta_escalamiento
+
+    - id: anular_escalamiento
+      name: Anular Escalamiento
+      description: El gestionador anula el escalamiento en cualquier momento
+      from:
+        - en_edicion
+      substate_from:
+        - escalamiento_asignado
+        - escalamiento_aceptado
+        - escalamiento_en_edicion
+        - escalamiento_respondido
+        - escalamiento_rechazado
+      to: en_edicion
+      substate_to: escalamiento_anulado
+      allowed_roles:
+        - gestionador
+
+    - id: consolidar_escalamiento
+      name: Consolidar Escalamiento
+      description: El gestionador acepta y consolida la respuesta del escalamiento
+      from:
+        - en_edicion
+      substate_from: escalamiento_respondido
+      to: en_edicion
+      allowed_roles:
+        - gestionador
+      closes_subflow: true
+
+  # ============================================================================
+  # ALERTAS
+  # ============================================================================
+  alerts:
+    - id: alerta_sla_50
+      name: Alerta SLA 50%
+      trigger: sla_percentage
+      threshold: 50
+      message: El tramite ha consumido el 50% del tiempo asignado
+      notify:
+        - gestionador
+        - asignador
+
+    - id: alerta_sla_25
+      name: Alerta SLA 25%
+      trigger: sla_percentage
+      threshold: 25
+      message: El tramite tiene solo 25% del tiempo restante
+      notify:
+        - gestionador
+        - asignador
+        - revisor
+
+    - id: alerta_sla_1dia
+      name: Alerta 1 Dia Restante
+      trigger: sla_days_remaining
+      threshold: 1
+      message: El tramite vence manana
+      notify:
+        - gestionador
+        - asignador
+        - revisor
+        - aprobador
+
+    - id: alerta_sla_vencido
+      name: Alerta SLA Vencido
+      trigger: sla_percentage
+      threshold: 0
+      message: El tramite ha superado el tiempo asignado
+      notify:
+        - gestionador
+        - asignador
+        - revisor
+        - aprobador
+
+  # ============================================================================
+  # METADATA
+  # ============================================================================
+  metadata:
+    project: "SGDEA DOCUM - POSITIVA"
+    client: "POSITIVA"
+    hu: "Gestion de Tramites MinTrabajo"
+    author: "FlowEngine"
+    created_at: "2024-12-01"
+
+    roles:
+      - id: asignador
+        name: Asignador
+        description: Responsable de asignar tramites a gestionadores
+      - id: gestionador
+        name: Gestionador
+        description: Responsable de gestionar y editar el tramite
+      - id: revisor
+        name: Revisor
+        description: Responsable de revisar el tramite
+      - id: aprobador
+        name: Aprobador
+        description: Responsable de aprobar el tramite
+      - id: asignador_clonacion
+        name: Asignador de Responsable (Area Clonada)
+        description: Asigna la clonacion al gestionador clonado
+      - id: gestionador_clonado
+        name: Gestionador Clonado
+        description: Gestiona la clonacion asignada
+      - id: asignador_escalamiento
+        name: Asignador de Responsable (Area Escalada)
+        description: Asigna el escalamiento al gestionador escalado
+      - id: gestionador_escalado
+        name: Gestionador Escalado
+        description: Gestiona el escalamiento asignado
+      - id: seguimiento_envio
+        name: Seguimiento de Envio
+        description: Responsable del seguimiento de envio fisico
+      - id: publicador
+        name: Publicador
+        description: Responsable de publicar tramites devueltos
+
+    phases:
+      - id: asignacion
+        name: Asignacion
+        order: 1
+      - id: gestion
+        name: Gestion
+        order: 2
+      - id: clonacion
+        name: Clonacion (Flujo Alterno)
+        order: 3
+        is_parallel: true
+      - id: escalamiento
+        name: Escalamiento (Flujo Alterno)
+        order: 4
+        is_parallel: true
+      - id: revision
+        name: Revision
+        order: 5
+      - id: aprobacion
+        name: Aprobacion
+        order: 6
+      - id: envio
+        name: Envio y Correspondencia
+        order: 7
+      - id: publicacion
+        name: Publicacion
+        order: 8
+
+    stats:
+      total_states: 17
+      total_substates: 13
+      total_events: 35
+      total_roles: 10
+      final_states: 3

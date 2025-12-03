@@ -1,0 +1,17 @@
+{
+  "event": "approve",
+  "actor_id": "660f9511-f3ac-52e5-b827-557766551111",
+  "reason": "Propuesta aprobada por el comité ejecutivo",
+  "feedback": "Excelente propuesta, adelante con el proyecto. El presupuesto está aprobado.",
+  "metadata": {
+    "reviewer": "María García",
+    "review_score": 95,
+    "approved_amount": 50000,
+    "conditions": "Entregar reporte mensual de avance"
+  },
+  "data": {
+    "approval_date": "2025-01-19",
+    "approved_by": "María García",
+    "approved_amount": 50000
+  }
+}

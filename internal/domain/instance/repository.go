@@ -23,6 +23,10 @@ type Repository interface {
 	// Returns an empty slice if no instances exist.
 	FindByWorkflowID(ctx context.Context, workflowID shared.ID) ([]*Instance, error)
 
+	// FindByParentID retrieves all child instances (subprocesses) for a given parent instance.
+	// Returns an empty slice if no subprocesses exist.
+	FindByParentID(ctx context.Context, parentID shared.ID) ([]*Instance, error)
+
 	// FindByStatus retrieves all instances with the given status.
 	// Returns an empty slice if no instances exist.
 	FindByStatus(ctx context.Context, status Status) ([]*Instance, error)

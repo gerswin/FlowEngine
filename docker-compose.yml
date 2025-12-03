@@ -1,0 +1,149 @@
+# ==============================================================================
+# FlowEngine - Docker Compose
+# ==============================================================================
+# Proyecto: SGDEA DOCUM - POSITIVA
+# Descripcion: Motor de workflows con soporte para flujos MinTrabajo (HU-006)
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # Application
+  # ===========================================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: flowengine-api
+    ports:
+      - "8080:8080"
+    environment:
+      # --- Server ---
+      - PORT=8080
+      - LOG_LEVEL=debug
+      - LOG_FORMAT=json
+      - GIN_MODE=debug
+
+      # --- Database ---
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=flowuser
+      - POSTGRES_PASSWORD=flowpass
+      - POSTGRES_DB=flowengine
+      - POSTGRES_SSLMODE=disable
+      - POSTGRES_MAX_CONNECTIONS=25
+      - POSTGRES_MAX_IDLE_CONNECTIONS=5
+
+      # --- Cache ---
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=
+      - REDIS_DB=0
+      - REDIS_CACHE_TTL=3600
+
+      # --- Security ---
+      - JWT_SECRET=dev-secret-key-change-in-prod
+      - JWT_EXPIRATION=24h
+      - CORS_ALLOWED_ORIGINS=*
+
+      # --- MinTrabajo HU-006 ---
+      - MINTRABAJO_ENABLED=true
+      - MINTRABAJO_DEFAULT_SLA_DAYS=15
+      - MINTRABAJO_BUSINESS_HOURS_START=08:00
+      - MINTRABAJO_BUSINESS_HOURS_END=17:00
+      - MINTRABAJO_TIMEZONE=America/Bogota
+
+      # --- Alerts & Timers ---
+      - ALERTS_ENABLED=true
+      - ALERTS_CHECK_INTERVAL=5m
+      - TIMER_WORKER_ENABLED=true
+      - TIMER_WORKER_INTERVAL=1m
+
+      # --- Email Notifications (optional) ---
+      - SMTP_ENABLED=false
+      - SMTP_HOST=
+      - SMTP_PORT=587
+      - SMTP_USER=
+      - SMTP_PASSWORD=
+      - SMTP_FROM=noreply@flowengine.local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./config/templates:/app/config/templates:ro
+      - ./logs:/app/logs
+    networks:
+      - flow-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+  # ===========================================================================
+  # Database
+  # ===========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: flowengine-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=flowuser
+      - POSTGRES_PASSWORD=flowpass
+      - POSTGRES_DB=flowengine
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - flow-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowuser -d flowengine"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ===========================================================================
+  # Cache
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: flowengine-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - flow-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# ==============================================================================
+# Networks
+# ==============================================================================
+networks:
+  flow-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

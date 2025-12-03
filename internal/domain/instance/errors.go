@@ -34,9 +34,19 @@ var (
 )
 
 // InstanceNotFoundError creates a new instance not found error with context.
-func InstanceNotFoundError(instanceID shared.ID) *shared.DomainError {
-	return shared.NotFoundError(fmt.Sprintf("instance not found: %s", instanceID.String())).
-		WithContext("instance_id", instanceID.String())
+func InstanceNotFoundError(instanceID string) *shared.DomainError {
+	return shared.NotFoundError(fmt.Sprintf("instance not found: %s", instanceID)).
+		WithContext("instance_id", instanceID)
+}
+
+// VersionConflictError creates a version conflict error for optimistic locking.
+func VersionConflictError(instanceID shared.ID, expected, actual Version) *shared.DomainError {
+	return shared.ConflictError(
+		fmt.Sprintf("version conflict for instance %s: expected v%s, got v%s",
+			instanceID.String(), expected.String(), actual.String()),
+	).WithContext("instance_id", instanceID.String()).
+		WithContext("expected_version", expected.String()).
+		WithContext("actual_version", actual.String())
 }
 
 // InvalidTransitionError creates a new invalid transition error with context.

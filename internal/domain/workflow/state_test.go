@@ -12,12 +12,12 @@ func TestNewState_Success(t *testing.T) {
 	state, err := NewState("pending", "Pending")
 
 	require.NoError(t, err)
-	assert.Equal(t, "pending", state.ID())
-	assert.Equal(t, "Pending", state.Name())
-	assert.Empty(t, state.Description())
-	assert.Equal(t, time.Duration(0), state.Timeout())
-	assert.Empty(t, state.OnTimeout())
-	assert.False(t, state.IsFinal())
+	assert.Equal(t, "pending", state.ID)
+	assert.Equal(t, "Pending", state.Name)
+	assert.Empty(t, state.Description)
+	assert.Equal(t, time.Duration(0), state.Timeout)
+	assert.Empty(t, state.OnTimeout)
+	assert.False(t, state.IsFinal)
 }
 
 func TestNewState_InvalidID(t *testing.T) {
@@ -61,9 +61,9 @@ func TestState_WithDescription(t *testing.T) {
 
 	stateWithDesc := state.WithDescription("Waiting for approval")
 
-	assert.Equal(t, "Waiting for approval", stateWithDesc.Description())
-	assert.Equal(t, state.ID(), stateWithDesc.ID())
-	assert.Equal(t, state.Name(), stateWithDesc.Name())
+	assert.Equal(t, "Waiting for approval", stateWithDesc.Description)
+	assert.Equal(t, state.ID, stateWithDesc.ID)
+	assert.Equal(t, state.Name, stateWithDesc.Name)
 }
 
 func TestState_WithTimeout(t *testing.T) {
@@ -71,8 +71,8 @@ func TestState_WithTimeout(t *testing.T) {
 
 	stateWithTimeout := state.WithTimeout(1*time.Hour, "timeout_event")
 
-	assert.Equal(t, 1*time.Hour, stateWithTimeout.Timeout())
-	assert.Equal(t, "timeout_event", stateWithTimeout.OnTimeout())
+	assert.Equal(t, 1*time.Hour, stateWithTimeout.Timeout)
+	assert.Equal(t, "timeout_event", stateWithTimeout.OnTimeout)
 }
 
 func TestState_AsFinal(t *testing.T) {
@@ -80,8 +80,8 @@ func TestState_AsFinal(t *testing.T) {
 
 	finalState := state.AsFinal()
 
-	assert.True(t, finalState.IsFinal())
-	assert.False(t, state.IsFinal()) // Original should be unchanged (immutability)
+	assert.True(t, finalState.IsFinal)
+	assert.False(t, state.IsFinal) // Original should be unchanged (immutability)
 }
 
 func TestState_Validate(t *testing.T) {

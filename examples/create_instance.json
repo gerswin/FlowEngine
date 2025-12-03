@@ -1,0 +1,16 @@
+{
+  "workflow_id": "REPLACE_WITH_ACTUAL_WORKFLOW_ID",
+  "started_by": "550e8400-e29b-41d4-a716-446655440000",
+  "data": {
+    "title": "Propuesta de Proyecto Q1 2025",
+    "requester": "Juan Pérez",
+    "department": "IT",
+    "amount": 50000,
+    "description": "Implementación de nuevo sistema de gestión"
+  },
+  "variables": {
+    "priority": "high",
+    "sla_hours": 48,
+    "approvers": ["manager", "director"]
+  }
+}

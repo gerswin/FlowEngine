@@ -1,0 +1,54 @@
+{
+  "name": "Proceso de Aprobación",
+  "description": "Workflow simple de aprobación con 3 estados",
+  "created_by": "550e8400-e29b-41d4-a716-446655440000",
+  "initial_state": {
+    "id": "draft",
+    "name": "Borrador",
+    "description": "Documento en borrador",
+    "is_final": false
+  },
+  "states": [
+    {
+      "id": "draft",
+      "name": "Borrador",
+      "description": "Documento en borrador",
+      "is_final": false
+    },
+    {
+      "id": "review",
+      "name": "En Revisión",
+      "description": "Documento siendo revisado",
+      "is_final": false
+    },
+    {
+      "id": "approved",
+      "name": "Aprobado",
+      "description": "Documento aprobado",
+      "is_final": true
+    },
+    {
+      "id": "rejected",
+      "name": "Rechazado",
+      "description": "Documento rechazado",
+      "is_final": true
+    }
+  ],
+  "events": [
+    {
+      "name": "submit",
+      "sources": ["draft"],
+      "destination": "review"
+    },
+    {
+      "name": "approve",
+      "sources": ["review"],
+      "destination": "approved"
+    },
+    {
+      "name": "reject",
+      "sources": ["review"],
+      "destination": "rejected"
+    }
+  ]
+}

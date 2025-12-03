@@ -50,15 +50,12 @@ FlowEngine/
 
 ## Inicio Rápido
 
-### Prerrequisitos
+### Prerrequisitos Mínimos
 
-- Go 1.21 o superior
-- Docker y Docker Compose
-- PostgreSQL 15+
-- Redis 7+
-- RabbitMQ 3.12+
+- **Go 1.21 o superior** ✅
+- (Opcional) PostgreSQL 15+, Redis 7+, RabbitMQ 3.12+ para producción
 
-### Instalación
+### Instalación y Ejecución
 
 ```bash
 # Clonar repositorio
@@ -68,17 +65,41 @@ cd FlowEngine
 # Instalar dependencias
 go mod download
 
-# Levantar infraestructura (Docker)
-make docker-up
-
-# Ejecutar migraciones
-make migrate-up
-
 # Ejecutar tests
 make test
 
-# Iniciar API server
+# 🚀 Iniciar API server (con repositorios in-memory)
 make run
+```
+
+**El servidor estará disponible en `http://localhost:8080`**
+
+### Probar el API
+
+#### Opción 1: Con Postman (Recomendado) ⭐
+
+```bash
+# Importar la colección en Postman
+# Archivos: postman/FlowEngine_API.postman_collection.json
+#          postman/FlowEngine_Environment.postman_environment.json
+
+# Ver guía completa
+cat postman/README.md
+```
+
+#### Opción 2: Con cURL
+
+```bash
+# Health check
+curl http://localhost:8080/health
+
+# Crear un workflow
+curl -X POST http://localhost:8080/api/v1/workflows \
+  -H "Content-Type: application/json" \
+  -d @examples/create_workflow.json
+
+# Ver documentación completa
+cat docs/api_quickstart.md
 ```
 
 ## Comandos Disponibles
@@ -101,7 +122,8 @@ make migrate-down       # Revertir migraciones
 - [Requisitos](requirements.md)
 - [Diseño Arquitectónico](design.md)
 - [Plan de Implementación](task.md)
-- [API Documentation](docs/api.md) _(próximamente)_
+- **[API REST - Quick Start](docs/api_quickstart.md)** ⭐ ¡NUEVO!
+- [REST API - Estado Completo](REST_API_COMPLETE.md)
 
 ## Arquitectura
 

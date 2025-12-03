@@ -51,6 +51,30 @@ func NewTransitionWithSubStates(from, to, event string, actor shared.ID, fromSub
 	}
 }
 
+// RestoreTransition reconstitutes a transition from persistence.
+// This should ONLY be used by repositories.
+func RestoreTransition(
+	id shared.ID,
+	from, to, event string,
+	actor shared.ID,
+	fromSubState, toSubState SubState,
+	data Data,
+	timestamp shared.Timestamp,
+) *Transition {
+	return &Transition{
+		id:           id,
+		from:         from,
+		to:           to,
+		event:        event,
+		actor:        actor,
+		fromSubState: fromSubState,
+		toSubState:   toSubState,
+		data:         data,
+		timestamp:    timestamp,
+		metadata:     EmptyTransitionMetadata(), // Metadata is usually populated separately via SetMetadata if needed
+	}
+}
+
 // ID returns the transition ID.
 func (t *Transition) ID() shared.ID {
 	return t.id

@@ -15,12 +15,38 @@ type Workflow struct {
 	version      Version
 	description  string
 	initialState State
-	states       map[string]State        // keyed by state ID
-	events       map[string]Event        // keyed by event name
-	domainEvents []event.DomainEvent     // Domain events to be published
+	states       map[string]State    // keyed by state ID
+	events       map[string]Event    // keyed by event name
+	domainEvents []event.DomainEvent // Domain events to be published
 	createdAt    shared.Timestamp
 	updatedAt    shared.Timestamp
-	createdBy    shared.ID               // Added to track creator
+	createdBy    shared.ID // Added to track creator
+}
+
+// RestoreWorkflow reconstitutes a workflow from persistence.
+func RestoreWorkflow(
+	id shared.ID,
+	name string,
+	version Version,
+	description string,
+	initialState State,
+	states map[string]State,
+	events map[string]Event,
+	createdAt shared.Timestamp,
+	updatedAt shared.Timestamp,
+) *Workflow {
+	return &Workflow{
+		id:           id,
+		name:         name,
+		version:      version,
+		description:  description,
+		initialState: initialState,
+		states:       states,
+		events:       events,
+		domainEvents: []event.DomainEvent{},
+		createdAt:    createdAt,
+		updatedAt:    updatedAt,
+	}
 }
 
 // NewWorkflow creates a new Workflow with the given name and initial state.
@@ -54,13 +80,13 @@ func NewWorkflow(name string, initialState State, createdBy shared.ID) (*Workflo
 	}
 
 	// Add initial state to states map
-	w.states[initialState.ID()] = initialState
+	w.states[initialState.ID] = initialState
 
 	// Record workflow created event
 	w.recordEvent(event.NewWorkflowCreated(
 		w.id,
 		name,
-		initialState.ID(),
+		initialState.ID,
 		createdBy,
 	))
 
@@ -129,19 +155,21 @@ func (w *Workflow) SetDescription(description string) {
 }
 
 // States returns a copy of all states in the workflow.
-func (w *Workflow) States() []State {
-	states := make([]State, 0, len(w.states))
+func (w *Workflow) States() []*State {
+	states := make([]*State, 0, len(w.states))
 	for _, state := range w.states {
-		states = append(states, state)
+		s := state
+		states = append(states, &s)
 	}
 	return states
 }
 
 // Events returns a copy of all events in the workflow.
-func (w *Workflow) Events() []Event {
-	events := make([]Event, 0, len(w.events))
+func (w *Workflow) Events() []*Event {
+	events := make([]*Event, 0, len(w.events))
 	for _, event := range w.events {
-		events = append(events, event)
+		e := event
+		events = append(events, &e)
 	}
 	return events
 }
@@ -152,11 +180,11 @@ func (w *Workflow) AddState(state State) error {
 		return InvalidWorkflowError(fmt.Sprintf("invalid state: %v", err))
 	}
 
-	if _, exists := w.states[state.ID()]; exists {
-		return StateAlreadyExistsError(state.ID())
+	if _, exists := w.states[state.ID]; exists {
+		return StateAlreadyExistsError(state.ID)
 	}
 
-	w.states[state.ID()] = state
+	w.states[state.ID] = state
 	w.updatedAt = shared.Now()
 
 	return nil
@@ -184,22 +212,22 @@ func (w *Workflow) AddEvent(event Event) error {
 	}
 
 	// Verify all source states exist
-	for _, source := range event.Sources() {
-		if !w.HasState(source.ID()) {
-			return StateNotFoundError(source.ID())
+	for _, source := range event.Sources {
+		if !w.HasState(source.ID) {
+			return StateNotFoundError(source.ID)
 		}
 	}
 
 	// Verify destination state exists
-	if !w.HasState(event.Destination().ID()) {
-		return StateNotFoundError(event.Destination().ID())
+	if !w.HasState(event.Destination.ID) {
+		return StateNotFoundError(event.Destination.ID)
 	}
 
-	if _, exists := w.events[event.Name()]; exists {
-		return EventAlreadyExistsError(event.Name())
+	if _, exists := w.events[event.Name]; exists {
+		return EventAlreadyExistsError(event.Name)
 	}
 
-	w.events[event.Name()] = event
+	w.events[event.Name] = event
 	w.updatedAt = shared.Now()
 
 	return nil
@@ -225,15 +253,15 @@ func (w *Workflow) HasEvent(eventName string) bool {
 	return exists
 }
 
-// CanTransition checks if a transition from the given state using the given event is valid.
+// CanTransitionFrom checks if this event can transition from the given state.
 func (w *Workflow) CanTransition(from State, event Event) bool {
 	// Check if the state exists in the workflow
-	if !w.HasState(from.ID()) {
+	if !w.HasState(from.ID) {
 		return false
 	}
 
 	// Check if the event exists in the workflow
-	if !w.HasEvent(event.Name()) {
+	if !w.HasEvent(event.Name) {
 		return false
 	}
 
@@ -282,32 +310,32 @@ func (w *Workflow) Validate() error {
 		return InvalidWorkflowError(fmt.Sprintf("invalid initial state: %v", err))
 	}
 
-	if !w.HasState(w.initialState.ID()) {
+	if !w.HasState(w.initialState.ID) {
 		return InvalidWorkflowError("initial state not found in workflow states")
 	}
 
 	// Validate all states
 	for _, state := range w.states {
 		if err := state.Validate(); err != nil {
-			return InvalidWorkflowError(fmt.Sprintf("invalid state %s: %v", state.ID(), err))
+			return InvalidWorkflowError(fmt.Sprintf("invalid state %s: %v", state.ID, err))
 		}
 	}
 
 	// Validate all events
 	for _, event := range w.events {
 		if err := event.Validate(); err != nil {
-			return InvalidWorkflowError(fmt.Sprintf("invalid event %s: %v", event.Name(), err))
+			return InvalidWorkflowError(fmt.Sprintf("invalid event %s: %v", event.Name, err))
 		}
 
 		// Verify source and destination states exist
-		for _, source := range event.Sources() {
-			if !w.HasState(source.ID()) {
-				return InvalidWorkflowError(fmt.Sprintf("event %s references non-existent source state: %s", event.Name(), source.ID()))
+		for _, source := range event.Sources {
+			if !w.HasState(source.ID) {
+				return InvalidWorkflowError(fmt.Sprintf("event %s references non-existent source state: %s", event.Name, source.ID))
 			}
 		}
 
-		if !w.HasState(event.Destination().ID()) {
-			return InvalidWorkflowError(fmt.Sprintf("event %s references non-existent destination state: %s", event.Name(), event.Destination().ID()))
+		if !w.HasState(event.Destination.ID) {
+			return InvalidWorkflowError(fmt.Sprintf("event %s references non-existent destination state: %s", event.Name, event.Destination.ID))
 		}
 	}
 

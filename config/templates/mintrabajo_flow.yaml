@@ -1,0 +1,1665 @@
+version: "1.0"
+
+# ==============================================================================
+# INFORMACION DEL PROYECTO
+# ==============================================================================
+# Empresa cliente:        POSITIVA
+# Nombre de proyecto:     SGDEA DOCUM - POSITIVA
+# Nombre del requerimiento: Flujo Ministerio del Trabajo
+# Historia de usuario:    HU-006_clonacion_de_Procesos_Min_Trabajo
+#
+# Versionamiento:
+# -------------------------------------------------------------------------------
+# Version | Descripcion                    | Autor               | Fecha
+# -------------------------------------------------------------------------------
+# 1.0     | Construccion de la HU          | Majli M. Labrador R.| 24/11/2025
+# ==============================================================================
+
+workflow:
+  id: "mintrabajo_flow"
+  name: "Flujo Ministerio del Trabajo"
+  description: |
+    Flujo completo para tramites del Ministerio del Trabajo.
+
+    ESCENARIO DE LA HU:
+    Cuando el Asignador o Abogado Gestionador evidencian que se requiere
+    informacion adicional para responder el tramite, estos roles podran
+    hacer la solicitud a las areas de la compania para que le remitan
+    los soportes.
+
+    COMO: Asignador o Abogado Gestionador
+    QUIERO: Realizar una clonacion a diferentes oficinas y dependencias
+            activas de la compania.
+    PARA: Solicitar recursos o soportes que serviran de apoyo en la
+          construccion de la respuesta del tramite.
+
+    El proceso de clonacion permite solicitar informacion a multiples
+    dependencias en paralelo, cada una con plazos independientes. El
+    Abogado Gestionador puede avanzar con la gestion de la respuesta
+    utilizando la informacion recibida de las clonaciones que hayan
+    sido respondidas, sin necesidad de esperar todas las respuestas.
+
+    FUNCIONALIDADES INCLUIDAS:
+    - Radicacion de tramites por correo
+    - Asignacion con parametrizacion de tiempos y etapas procesales
+    - Gestion por abogado con clonacion y escalamiento
+    - Ciclo de revision y aprobacion
+    - Envio de respuesta al remitente
+
+  initial_state: "radicado"
+
+  # ============================================================================
+  # REGLAS DE NEGOCIO (RN)
+  # ============================================================================
+  #
+  # RN-01: SELECCION DE USUARIOS PARA CLONACION
+  # - Busqueda y seleccion de usuarios por nombre
+  # - Filtrar por oficina (activas, grupos, gerencias, sucursales)
+  # - Seleccion multiple de usuarios de diferentes dependencias
+  # - Mostrar: Colaborador, Cargo y Grupo
+  #
+  # RN-02: VALIDACION DE TIEMPO DE CLONACION
+  # - Tiempo ingresado manualmente por el Abogado Gestionador
+  # - NO puede ser igual ni superior al tiempo total del tramite principal
+  # - Plazo maximo recomendado: 70% del tiempo total del tramite
+  # - Permite ingresar tiempo en dias y horas habiles
+  #
+  # RN-03: CLONACION EN CONDICIONES DE TIEMPO CRITICO
+  # - Si el requerimiento llega el mismo dia de vencimiento: permitir horas/minutos
+  # - Si el tramite llega vencido: permitir horas y minutos habiles
+  #
+  # RN-04: CAMPOS OBLIGATORIOS PARA CREAR CLONACION
+  # - Observaciones (obligatorio)
+  # - Al menos un usuario seleccionado
+  # - Tiempo asignado valido
+  # - Documentos adjuntos (opcional)
+  #
+  # RN-05: ESTADO DEL TRAMITE PRINCIPAL DURANTE CLONACION
+  # - Tramite principal queda en estado "En edicion"
+  # - Gestionador puede consolidar respuesta sin esperar todas las respuestas
+  #
+  # RN-06: LIMITE DE RECHAZOS DE CLONACION
+  # - Maximo 2 rechazos por usuario clonado
+  # - Motivo de rechazo obligatorio
+  # - Despues del 2do rechazo: asignacion automatica sin opcion de rechazar
+  # - Sistema lleva contador de rechazos por usuario/clonacion
+  #
+  # RN-07: ACEPTACION DE CLONACION
+  # - Al aceptar: habilitar opcion de responder
+  # - Registrar en trazabilidad con fecha/hora
+  # - Estado permanece como "Gestion de clonacion"
+  #
+  # RN-08: RESPUESTA DE CLONACION
+  # - Solo responder despues de aceptar
+  # - Campo de observaciones: texto abierto + imagenes
+  # - Registrar fecha/hora exacta de respuesta
+  # - Permitir responder incluso despues de vencimiento
+  #
+  # RN-09: ANULACION DE CLONACION
+  # - Solo el Gestionador creador puede anular
+  # - Anulacion en cualquier momento (antes/despues de respuesta)
+  # - Motivo obligatorio
+  # - Remover de bandeja del usuario clonado
+  # - Estado cambia a "Clonado Anulado"
+  #
+  # RN-10: GESTION DE CLONACIONES VENCIDAS
+  # - Clonaciones vencidas NO bloquean tramite principal
+  # - Permanecen en bandeja del usuario clonado hasta respuesta
+  # - Notificar al Gestionador cuando una clonacion vence
+  #
+  # RN-11: ASOCIACION DE DOCUMENTOS AL DOCUMENTO DE SALIDA
+  # - Gestionador puede seleccionar documentos de respuestas de clonacion
+  # - Se asocian a pestana "Documentos Relacionados" filtro "De salida"
+  # - Requiere confirmacion antes de asociar
+  #
+  # RN-12: CLONACIONES EN PARALELO INDEPENDIENTES
+  # - Cada clonacion tiene plazo, estado y gestion independiente
+  # - Rechazo/aceptacion/respuesta de una NO afecta otras
+  # - Vencimiento de una NO afecta plazo de otras
+  #
+  # RN-13: SISTEMA DE ALERTAS AUTOMATICAS
+  # - 50% del tiempo restante
+  # - 25% del tiempo restante
+  # - 1 dia habil (u 8 horas habiles para clonaciones en horas)
+  # - Dia del vencimiento
+  # - Destinatarios: usuario clonado + Abogado Gestionador
+  #
+  # RN-14: FORMATO DE NOTIFICACIONES
+  # - Envio por correo electronico
+  # - Formato: "El caso [Numero] le fue asignado para su gestion.
+  #            Por favor responda antes de [Fecha y hora de vencimiento]."
+  #
+  # RN-15: TRAZABILIDAD
+  # - Registrar: creacion, aceptacion, rechazo, respuesta, anulacion
+  # - Incluir: fecha, hora, usuario, descripcion de accion
+  # - Guardar motivos de rechazo y anulacion
+  # ============================================================================
+
+  # ============================================================================
+  # ESTADOS DE CLONACION
+  # ============================================================================
+  # - Gestion de clonacion: Creado y en proceso. Se mantiene al aceptar/responder.
+  # - Clonado Rechazado: Usuario clonado rechazo la solicitud.
+  # - Clonado Anulado: Gestionador anulo la clonacion.
+  # ============================================================================
+
+  # ============================================================================
+  # ESTADOS PRINCIPALES
+  # ============================================================================
+  states:
+    # Estado 1: Radicado - Estado inicial cuando se radica el tramite
+    - id: radicado
+      name: Radicado
+      description: Tramite radicado desde correo electronico, pendiente de asignacion
+      allowed_roles:
+        - radicador
+      metadata:
+        color: "#3498db"
+        icon: "inbox"
+
+    # Estado 2: Por Asignar - En bandeja del asignador de responsable
+    - id: por_asignar
+      name: Por Asignar
+      description: Tramite en bandeja del asignador de responsable esperando asignacion
+      timeout: 24h
+      on_timeout: timeout_asignacion
+      allowed_roles:
+        - asignador_responsable
+      metadata:
+        color: "#9b59b6"
+        icon: "user-plus"
+
+    # Estado 3: En Asignacion - Mientras se parametriza tiempo y etapas
+    - id: en_asignacion
+      name: En Asignacion
+      description: Asignador esta parametrizando tiempos, etapas y seleccionando abogado
+      timeout: 4h
+      on_timeout: timeout_asignacion
+      allowed_roles:
+        - asignador_responsable
+      metadata:
+        color: "#8e44ad"
+        icon: "cog"
+
+    # Estado 4: Para Gestion - Asignado al abogado gestionador
+    - id: para_gestion
+      name: Para Gestion
+      description: Tramite asignado y en bandeja del abogado gestionador
+      timeout: 8h
+      on_timeout: timeout_gestion
+      allowed_roles:
+        - abogado_gestionador
+      metadata:
+        color: "#f39c12"
+        icon: "briefcase"
+
+    # Estado 5: En Edicion - Abogado gestionador trabajando en el documento
+    # NOTA: Este estado se mantiene durante el proceso de clonacion (RN-05)
+    - id: en_edicion
+      name: En Edicion
+      description: |
+        Abogado gestionador elaborando documento de salida.
+        Durante clonacion: el tramite permanece aqui mientras se recopila
+        informacion de los usuarios clonados.
+      allowed_roles:
+        - abogado_gestionador
+      substates:
+        - id: editando
+          name: Editando
+          description: Gestion normal del documento de salida
+          default: true
+        - id: gestion_clonacion
+          name: Gestion de Clonacion
+          description: Esperando respuesta de tramite(s) clonado(s)
+        - id: clonacion_rechazada
+          name: Clonacion Rechazada
+          description: El clonado rechazo la solicitud, pendiente de decision
+        - id: clonacion_respondida
+          name: Clonacion Respondida
+          description: Se recibio respuesta de la clonacion
+        - id: gestion_escalamiento
+          name: Gestion de Escalamiento
+          description: Esperando respuesta de escalamiento
+        - id: escalamiento_rechazado
+          name: Escalamiento Rechazado
+          description: El escalado rechazo la solicitud
+        - id: escalamiento_respondido
+          name: Escalamiento Respondido
+          description: Se recibio respuesta del escalamiento
+      metadata:
+        color: "#e67e22"
+        icon: "edit"
+
+    # Estado 6: Por Revisar - En bandeja del revisor
+    - id: por_revisar
+      name: Por Revisar
+      description: Tramite enviado al revisor para revision de documento de salida
+      timeout: 24h
+      on_timeout: timeout_revision
+      allowed_roles:
+        - abogado_revisor
+      metadata:
+        color: "#1abc9c"
+        icon: "search"
+
+    # Estado 7: Revision Rechazada - Devuelto al gestionador
+    - id: revision_rechazada
+      name: Revision Rechazada
+      description: Revisor rechazo el documento, requiere correcciones del gestionador
+      allowed_roles:
+        - abogado_gestionador
+      metadata:
+        color: "#e74c3c"
+        icon: "times-circle"
+
+    # Estado 8: Revision Aprobada - Aprobado por revisor
+    - id: revision_aprobada
+      name: Revision Aprobada
+      description: Documento aprobado por revisor, pendiente de aprobacion final
+      allowed_roles:
+        - abogado_gestionador
+        - abogado_aprobador
+      metadata:
+        color: "#27ae60"
+        icon: "check-circle"
+
+    # Estado 9: Por Aprobar - En bandeja del aprobador
+    - id: por_aprobar
+      name: Por Aprobar
+      description: Tramite en bandeja del aprobador para aprobacion final
+      timeout: 24h
+      on_timeout: timeout_aprobacion
+      allowed_roles:
+        - abogado_aprobador
+      metadata:
+        color: "#2980b9"
+        icon: "stamp"
+
+    # Estado 10: Aprobado - Final, respuesta enviada
+    - id: aprobado
+      name: Aprobado
+      description: Tramite aprobado y respuesta enviada al remitente
+      final: true
+      allowed_roles: []
+      metadata:
+        color: "#2ecc71"
+        icon: "check-double"
+
+    # Estado 11: Reclasificado - Tramite enviado a otro flujo
+    - id: reclasificado
+      name: Reclasificado
+      description: Tramite reclasificado a otro flujo (Entes de Control o PQRD)
+      final: true
+      allowed_roles: []
+      metadata:
+        color: "#95a5a6"
+        icon: "exchange-alt"
+
+    # =========================================================================
+    # ESTADOS PARA PROCESO DE CLONACION
+    # Segun HU-006: Estados del proceso de clonacion independiente
+    # =========================================================================
+
+    # Estado: Clonacion Asignada (Gestion de Clonacion)
+    - id: clonacion_asignada
+      name: Clonacion Asignada
+      description: |
+        Solicitud de clonacion recibida por el usuario clonado.
+        ACCIONES DISPONIBLES:
+        - Aceptar clonacion (habilita opcion de responder)
+        - Rechazar clonacion (max 2 veces, requiere motivo)
+        NOTA: Si ya rechazo 2 veces y se le reasigna, no puede rechazar.
+      allowed_roles:
+        - abogado_gestionador_clonado
+      substates:
+        - id: pendiente_aceptacion
+          name: Pendiente de Aceptacion
+          description: Esperando que el usuario clonado acepte o rechace
+          default: true
+        - id: en_proceso
+          name: En Proceso
+          description: Usuario clonado acepto y esta trabajando en respuesta
+        - id: rechazo_negado
+          name: Rechazo Negado
+          description: El gestionador nego el rechazo, debe aceptar o rechazar nuevamente
+        - id: sin_opcion_rechazo
+          name: Sin Opcion de Rechazo
+          description: Usuario supero limite de rechazos, debe responder obligatoriamente
+      metadata:
+        color: "#3498db"
+        icon: "clone"
+
+    # Estado: Clonacion Respondida (Final para subproceso)
+    - id: clonacion_respondida_final
+      name: Clonacion Respondida
+      description: |
+        Clonado envio su respuesta al gestionador principal.
+        La respuesta incluye:
+        - Parrafo de observaciones
+        - Documentos adjuntos (opcional)
+        El gestionador puede ver el detalle en "Gestion clonacion".
+      final: true
+      allowed_roles: []
+      metadata:
+        color: "#27ae60"
+        icon: "reply"
+
+    # Estado: Clonacion Cancelada/Anulada (Final para subproceso)
+    - id: clonacion_cancelada
+      name: Clonacion Cancelada
+      description: |
+        La clonacion fue anulada por el gestionador principal.
+        Puede anularse en cualquier momento (antes o despues de respuesta).
+        El motivo de anulacion queda registrado en trazabilidad.
+      final: true
+      allowed_roles: []
+      metadata:
+        color: "#7f8c8d"
+        icon: "ban"
+
+    # =========================================================================
+    # ESTADOS PARA PROCESO DE ESCALAMIENTO
+    # =========================================================================
+
+    - id: escalamiento_asignado
+      name: Escalamiento Asignado
+      description: Solicitud de escalamiento recibida, pendiente de aceptar o rechazar
+      allowed_roles:
+        - abogado_gestionador_escalado
+      substates:
+        - id: pendiente_aceptacion
+          name: Pendiente de Aceptacion
+          default: true
+        - id: en_proceso
+          name: En Proceso
+        - id: rechazo_negado
+          name: Rechazo Negado
+        - id: sin_opcion_rechazo
+          name: Sin Opcion de Rechazo
+      metadata:
+        color: "#9b59b6"
+        icon: "level-up-alt"
+
+    - id: escalamiento_respondido_final
+      name: Escalamiento Respondido
+      description: Escalado envio los documentos solicitados
+      final: true
+      allowed_roles: []
+      metadata:
+        color: "#27ae60"
+        icon: "paperclip"
+
+    - id: escalamiento_cancelado
+      name: Escalamiento Cancelado
+      description: El escalamiento fue cancelado por el gestionador principal
+      final: true
+      allowed_roles: []
+      metadata:
+        color: "#7f8c8d"
+        icon: "ban"
+
+  # ============================================================================
+  # EVENTOS (TRANSICIONES)
+  # ============================================================================
+  events:
+    # ==========================================================================
+    # RADICACION
+    # ==========================================================================
+    - name: radicar_tramite
+      description: Radicar un nuevo tramite desde correo electronico
+      from: []
+      to: radicado
+      guards: []
+      actions:
+        - type: generate_document_id
+          params:
+            prefix: "MT"
+            format: "MT-{year}-{seq:06d}"
+        - type: emit_event
+          params:
+            event_type: tramite.radicado
+
+    - name: enviar_a_asignador
+      description: Enviar tramite radicado a bandeja del asignador
+      from:
+        - radicado
+      to: por_asignar
+      guards:
+        - type: has_role
+          params:
+            role: radicador
+      actions:
+        - type: notify
+          params:
+            recipients:
+              - role: asignador_responsable
+            template: "nuevo_tramite_por_asignar"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: tramite.enviado_a_asignacion
+
+    # ==========================================================================
+    # ASIGNACION
+    # ==========================================================================
+    - name: iniciar_asignacion
+      description: El asignador inicia el proceso de parametrizacion
+      from:
+        - por_asignar
+      to: en_asignacion
+      guards:
+        - type: has_role
+          params:
+            role: asignador_responsable
+      actions:
+        - type: emit_event
+          params:
+            event_type: tramite.en_asignacion
+
+    - name: asignar_abogado
+      description: Asignar tramite a un abogado gestionador con tiempos y etapas
+      from:
+        - en_asignacion
+      to: para_gestion
+      guards:
+        - type: has_role
+          params:
+            role: asignador_responsable
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - abogado_gestionador_id
+              - tiempo_gestion
+              - etapas_procesales
+      actions:
+        - type: assign_to_user
+          params:
+            user_field: "{{data.abogado_gestionador_id}}"
+            assignment_type: "user"
+        - type: notify
+          params:
+            recipients:
+              - "{{data.abogado_gestionador_id}}"
+            template: "asignacion_tramite"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: tramite.asignado
+
+    - name: reasignar_tramite
+      description: Reasignar tramite devuelto por rechazo de abogado
+      from:
+        - por_asignar
+        - en_asignacion
+      to: en_asignacion
+      guards:
+        - type: has_role
+          params:
+            role: asignador_responsable
+        - type: field_equals
+          params:
+            path: rechazado_por_abogado
+            value: true
+      actions:
+        - type: emit_event
+          params:
+            event_type: tramite.reasignacion_iniciada
+
+    # ==========================================================================
+    # RECLASIFICACION
+    # ==========================================================================
+    - name: reclasificar_a_entes_control
+      description: Reclasificar tramite al flujo de Entes de Control
+      from:
+        - por_asignar
+        - en_asignacion
+      to: reclasificado
+      guards:
+        - type: has_role
+          params:
+            role: asignador_responsable
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - motivo_reclasificacion
+      actions:
+        - type: emit_event
+          params:
+            event_type: tramite.reclasificado
+
+    - name: reclasificar_a_pqrd
+      description: Reclasificar tramite al flujo de PQRD
+      from:
+        - por_asignar
+        - en_asignacion
+      to: reclasificado
+      guards:
+        - type: has_role
+          params:
+            role: asignador_responsable
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - motivo_reclasificacion
+      actions:
+        - type: emit_event
+          params:
+            event_type: tramite.reclasificado
+
+    # ==========================================================================
+    # GESTION
+    # ==========================================================================
+    - name: iniciar_gestion
+      description: Abogado gestionador inicia la elaboracion del documento
+      from:
+        - para_gestion
+      to: en_edicion
+      target_substate: editando
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+        - type: is_assigned_to_actor
+      actions:
+        - type: set_substate
+          params:
+            substate: editando
+        - type: emit_event
+          params:
+            event_type: tramite.gestion_iniciada
+
+    # ==========================================================================
+    # CLONACION - Segun HU-006
+    # Proceso de solicitud de informacion a multiples dependencias en paralelo
+    # ==========================================================================
+
+    # Solicitar clonacion (Gestionador -> Usuario Clonado)
+    - name: solicitar_clonacion
+      description: |
+        Gestionador solicita clonacion para trabajo colaborativo.
+        VALIDACIONES (RN-02, RN-04):
+        - Tiempo no puede ser >= tiempo tramite principal
+        - Tiempo maximo recomendado: 70% del tiempo total
+        - Observaciones obligatorias
+        - Al menos un usuario seleccionado
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - editando
+        - clonacion_respondida
+        - escalamiento_respondido
+      to_substate: gestion_clonacion
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+        - type: is_assigned_to_actor
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - usuarios_clonacion
+              - tiempo_clonacion
+              - observaciones_clonacion
+        - type: custom
+          params:
+            validator: validate_tiempo_clonacion_menor_a_limite
+      actions:
+        - type: set_substate
+          params:
+            substate: gestion_clonacion
+        - type: create_clone
+          params:
+            target_users: "{{data.usuarios_clonacion}}"
+            timeout: "{{data.tiempo_clonacion}}"
+            observations: "{{data.observaciones_clonacion}}"
+            documents: "{{data.documentos_adjuntos}}"
+            clone_type: "clonacion"
+            allow_parallel: true
+        - type: notify
+          params:
+            recipients: "{{data.usuarios_clonacion}}"
+            template: "asignacion_clonacion"
+            message: "El caso {{instance.document_id}} le fue asignado para su gestion. Por favor responda el caso antes de {{data.fecha_vencimiento_clonacion}}."
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: clonacion.solicitada
+
+    # Recibir respuesta de clonacion
+    - name: recibir_respuesta_clonacion
+      description: Se recibe respuesta del usuario clonado
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - gestion_clonacion
+      to_substate: clonacion_respondida
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+      actions:
+        - type: set_substate
+          params:
+            substate: clonacion_respondida
+        - type: emit_event
+          params:
+            event_type: clonacion.respondida
+
+    # Recibir rechazo de clonacion
+    - name: recibir_rechazo_clonacion
+      description: |
+        El usuario clonado rechazo la solicitud.
+        El gestionador puede:
+        - Negar el rechazo (hasta 3 veces total por clonacion)
+        - Aceptar el rechazo y cancelar la clonacion
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - gestion_clonacion
+      to_substate: clonacion_rechazada
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+      actions:
+        - type: set_substate
+          params:
+            substate: clonacion_rechazada
+        - type: increment_field
+          params:
+            field: rechazos_clonacion_count
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.current_actor}}"
+            template: "clonacion_rechazada"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: clonacion.rechazada
+
+    # Negar rechazo de clonacion (RN-06: max 3 negaciones)
+    - name: negar_rechazo_clonacion
+      description: |
+        Gestionador niega el rechazo del clonado.
+        REGLA RN-06: Maximo 3 negaciones por clonacion.
+        Despues del 2do rechazo del usuario, si se niega,
+        el usuario queda sin opcion de rechazar.
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - clonacion_rechazada
+      to_substate: gestion_clonacion
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+        - type: is_assigned_to_actor
+        - type: custom
+          params:
+            validator: validate_rechazos_clonacion_menor_a_3
+      actions:
+        - type: set_substate
+          params:
+            substate: gestion_clonacion
+        - type: notify
+          params:
+            recipients:
+              - "{{data.usuario_clonacion}}"
+            template: "rechazo_clonacion_negado"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: clonacion.rechazo_negado
+
+    # Aceptar rechazo de clonacion
+    - name: aceptar_rechazo_clonacion
+      description: Gestionador acepta el rechazo del clonado y cancela la clonacion
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - clonacion_rechazada
+      to_substate: editando
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+        - type: is_assigned_to_actor
+      actions:
+        - type: set_substate
+          params:
+            substate: editando
+        - type: cancel_clone
+          params:
+            clone_id: "{{data.current_clone_id}}"
+        - type: emit_event
+          params:
+            event_type: clonacion.cancelada
+
+    # Anular clonacion (RN-09)
+    - name: anular_clonacion
+      description: |
+        Gestionador anula la clonacion en cualquier momento.
+        REGLA RN-09: Puede anularse antes o despues de la respuesta.
+        Motivo obligatorio. Se registra en trazabilidad.
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - gestion_clonacion
+        - clonacion_rechazada
+        - clonacion_respondida
+      to_substate: editando
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+        - type: is_assigned_to_actor
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - motivo_anulacion_clonacion
+      actions:
+        - type: set_substate
+          params:
+            substate: editando
+        - type: cancel_clone
+          params:
+            clone_id: "{{data.current_clone_id}}"
+            reason: "{{data.motivo_anulacion_clonacion}}"
+        - type: notify
+          params:
+            recipients:
+              - "{{data.usuario_clonacion}}"
+            template: "clonacion_anulada"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: clonacion.anulada
+
+    # Continuar gestion desde clonacion respondida
+    - name: continuar_gestion_desde_clonacion
+      description: |
+        Gestionador continua con la edicion despues de recibir respuesta de clonacion.
+        Puede asociar documentos de la respuesta al documento de salida (RN-11).
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - clonacion_respondida
+      to_substate: editando
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+        - type: is_assigned_to_actor
+      actions:
+        - type: set_substate
+          params:
+            substate: editando
+        - type: emit_event
+          params:
+            event_type: tramite.continua_gestion
+
+    # ==========================================================================
+    # ESCALAMIENTO
+    # ==========================================================================
+    - name: solicitar_escalamiento
+      description: Gestionador solicita informacion de otra area
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - editando
+        - clonacion_respondida
+        - escalamiento_respondido
+      to_substate: gestion_escalamiento
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+        - type: is_assigned_to_actor
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - usuarios_escalamiento
+              - tiempo_escalamiento
+              - documentos_solicitados
+        - type: custom
+          params:
+            validator: validate_tiempo_escalamiento_menor_a_limite
+      actions:
+        - type: set_substate
+          params:
+            substate: gestion_escalamiento
+        - type: create_escalation
+          params:
+            target_users: "{{data.usuarios_escalamiento}}"
+            timeout: "{{data.tiempo_escalamiento}}"
+            requested_documents: "{{data.documentos_solicitados}}"
+        - type: notify
+          params:
+            recipients: "{{data.usuarios_escalamiento}}"
+            template: "asignacion_escalamiento"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: escalamiento.solicitado
+
+    - name: recibir_respuesta_escalamiento
+      description: Se reciben los documentos del escalamiento
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - gestion_escalamiento
+      to_substate: escalamiento_respondido
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+      actions:
+        - type: set_substate
+          params:
+            substate: escalamiento_respondido
+        - type: emit_event
+          params:
+            event_type: escalamiento.respondido
+
+    - name: recibir_rechazo_escalamiento
+      description: El usuario escalado rechazo la solicitud
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - gestion_escalamiento
+      to_substate: escalamiento_rechazado
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+      actions:
+        - type: set_substate
+          params:
+            substate: escalamiento_rechazado
+        - type: increment_field
+          params:
+            field: rechazos_escalamiento_count
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.current_actor}}"
+            template: "escalamiento_rechazado"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: escalamiento.rechazado
+
+    - name: negar_rechazo_escalamiento
+      description: Gestionador niega el rechazo del escalado (maximo 2 veces)
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - escalamiento_rechazado
+      to_substate: gestion_escalamiento
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+        - type: is_assigned_to_actor
+        - type: custom
+          params:
+            validator: validate_rechazos_escalamiento_menor_a_3
+      actions:
+        - type: set_substate
+          params:
+            substate: gestion_escalamiento
+        - type: notify
+          params:
+            recipients:
+              - "{{data.usuario_escalamiento}}"
+            template: "rechazo_escalamiento_negado"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: escalamiento.rechazo_negado
+
+    - name: aceptar_rechazo_escalamiento
+      description: Gestionador acepta el rechazo del escalado
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - escalamiento_rechazado
+      to_substate: editando
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+        - type: is_assigned_to_actor
+      actions:
+        - type: set_substate
+          params:
+            substate: editando
+        - type: cancel_escalation
+          params:
+            escalation_id: "{{data.current_escalation_id}}"
+        - type: emit_event
+          params:
+            event_type: escalamiento.cancelado
+
+    - name: anular_escalamiento
+      description: Gestionador anula el escalamiento en cualquier momento
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - gestion_escalamiento
+        - escalamiento_rechazado
+        - escalamiento_respondido
+      to_substate: editando
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+        - type: is_assigned_to_actor
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - motivo_anulacion_escalamiento
+      actions:
+        - type: set_substate
+          params:
+            substate: editando
+        - type: cancel_escalation
+          params:
+            escalation_id: "{{data.current_escalation_id}}"
+            reason: "{{data.motivo_anulacion_escalamiento}}"
+        - type: notify
+          params:
+            recipients:
+              - "{{data.usuario_escalamiento}}"
+            template: "escalamiento_anulado"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: escalamiento.anulado
+
+    - name: continuar_gestion_desde_escalamiento
+      description: Gestionador continua con la edicion despues de recibir escalamiento
+      from:
+        - en_edicion
+      to: en_edicion
+      from_substate:
+        - escalamiento_respondido
+      to_substate: editando
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+        - type: is_assigned_to_actor
+      actions:
+        - type: set_substate
+          params:
+            substate: editando
+        - type: emit_event
+          params:
+            event_type: tramite.continua_gestion
+
+    # ==========================================================================
+    # REVISION
+    # ==========================================================================
+    - name: enviar_a_revision
+      description: Gestionador envia documento a revision
+      from:
+        - en_edicion
+      to: por_revisar
+      from_substate:
+        - editando
+        - clonacion_respondida
+        - escalamiento_respondido
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+        - type: is_assigned_to_actor
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - documento_salida
+              - abogado_revisor_id
+              - abogado_aprobador_id
+      actions:
+        - type: notify
+          params:
+            recipients:
+              - "{{data.abogado_revisor_id}}"
+            template: "asignacion_revision"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: tramite.enviado_a_revision
+
+    - name: aprobar_revision
+      description: Revisor aprueba el documento de salida
+      from:
+        - por_revisar
+      to: revision_aprobada
+      guards:
+        - type: has_role
+          params:
+            role: abogado_revisor
+      actions:
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.data.abogado_gestionador_id}}"
+            template: "revision_aprobada"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: revision.aprobada
+
+    - name: rechazar_revision
+      description: Revisor rechaza el documento y lo devuelve al gestionador
+      from:
+        - por_revisar
+      to: revision_rechazada
+      guards:
+        - type: has_role
+          params:
+            role: abogado_revisor
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - comentarios_rechazo
+      actions:
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.data.abogado_gestionador_id}}"
+            template: "revision_rechazada"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: revision.rechazada
+
+    - name: subsanar_y_reenviar
+      description: Gestionador subsana comentarios y reenvia a revision
+      from:
+        - revision_rechazada
+      to: por_revisar
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+        - type: is_assigned_to_actor
+      actions:
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.data.revisor_asignado}}"
+            template: "documento_subsanado"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: tramite.subsanado
+
+    # ==========================================================================
+    # APROBACION
+    # ==========================================================================
+    - name: enviar_a_aprobacion
+      description: Enviar documento aprobado por revisor al aprobador
+      from:
+        - revision_aprobada
+      to: por_aprobar
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador
+      actions:
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.data.aprobador_asignado}}"
+            template: "asignacion_aprobacion"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: tramite.enviado_a_aprobacion
+
+    - name: aprobar_tramite
+      description: Aprobador aprueba y envia respuesta al remitente
+      from:
+        - por_aprobar
+      to: aprobado
+      guards:
+        - type: has_role
+          params:
+            role: abogado_aprobador
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - documento_salida
+      actions:
+        - type: send_response
+          params:
+            recipient: "{{instance.data.remitente_email}}"
+            document: "{{instance.data.documento_salida}}"
+            template: "respuesta_tramite"
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.data.abogado_gestionador_id}}"
+            template: "tramite_aprobado"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: tramite.aprobado
+        - type: emit_event
+          params:
+            event_type: instance.completed
+
+    # ==========================================================================
+    # EVENTOS DE CLONACION (para el subproceso del clonado)
+    # Segun HU-006: Gestion del clonacion - Usuario clonado
+    # ==========================================================================
+
+    # Aceptar clonacion (CA-06)
+    - name: aceptar_clonacion
+      description: |
+        Usuario clonado acepta la solicitud de clonacion.
+        RESULTADO: Habilita opcion "Responder clonacion".
+        Se registra en trazabilidad con fecha y hora.
+      from:
+        - clonacion_asignada
+      to: clonacion_asignada
+      from_substate:
+        - pendiente_aceptacion
+        - rechazo_negado
+      to_substate: en_proceso
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador_clonado
+        - type: is_assigned_to_actor
+      actions:
+        - type: set_substate
+          params:
+            substate: en_proceso
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.parent.current_actor}}"
+            template: "clonacion_aceptada"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: clonacion.aceptada
+
+    # Rechazar clonacion por el usuario clonado (CA-04)
+    - name: rechazar_clonacion_por_clonado
+      description: |
+        Usuario clonado rechaza la solicitud.
+        REGLA RN-06: Maximo 2 rechazos. Motivo obligatorio.
+        Despues del 2do rechazo, si se reasigna, queda sin opcion de rechazar.
+      from:
+        - clonacion_asignada
+      to: clonacion_asignada
+      from_substate:
+        - pendiente_aceptacion
+        - rechazo_negado
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador_clonado
+        - type: is_assigned_to_actor
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - motivo_rechazo
+        - type: custom
+          params:
+            validator: validate_puede_rechazar_clonacion
+      actions:
+        - type: increment_field
+          params:
+            field: rechazos_usuario_count
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.parent.current_actor}}"
+            template: "clonacion_rechazada_por_clonado"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: clonacion.rechazada_por_clonado
+
+    # Responder clonacion (CA-07)
+    - name: responder_clonacion
+      description: |
+        Usuario clonado envia su respuesta.
+        COMPONENTES:
+        - Parrafo de observaciones (texto abierto + imagenes)
+        - Documentos adjuntos (opcional)
+        NOTA: Puede responder incluso despues del vencimiento (RN-08, RN-10).
+      from:
+        - clonacion_asignada
+      to: clonacion_respondida_final
+      from_substate:
+        - en_proceso
+        - sin_opcion_rechazo
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador_clonado
+        - type: is_assigned_to_actor
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - respuesta_clonacion
+      actions:
+        - type: record_escalation_response
+          params:
+            response: "{{data.respuesta_clonacion}}"
+            documents: "{{data.documentos_adjuntos}}"
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.parent.current_actor}}"
+            template: "clonacion_respondida"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: clonacion.respondida_por_clonado
+
+    # ==========================================================================
+    # EVENTOS DE ESCALAMIENTO (para el subproceso del escalado)
+    # ==========================================================================
+    - name: aceptar_escalamiento
+      description: Usuario escalado acepta la solicitud de escalamiento
+      from:
+        - escalamiento_asignado
+      to: escalamiento_asignado
+      from_substate:
+        - pendiente_aceptacion
+        - rechazo_negado
+      to_substate: en_proceso
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador_escalado
+        - type: is_assigned_to_actor
+      actions:
+        - type: set_substate
+          params:
+            substate: en_proceso
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.parent.current_actor}}"
+            template: "escalamiento_aceptado"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: escalamiento.aceptado
+
+    - name: rechazar_escalamiento_por_escalado
+      description: Usuario escalado rechaza la solicitud (max 2 veces efectivas)
+      from:
+        - escalamiento_asignado
+      to: escalamiento_asignado
+      from_substate:
+        - pendiente_aceptacion
+        - rechazo_negado
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador_escalado
+        - type: is_assigned_to_actor
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - motivo_rechazo
+        - type: custom
+          params:
+            validator: validate_puede_rechazar_escalamiento
+      actions:
+        - type: increment_field
+          params:
+            field: rechazos_usuario_count
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.parent.current_actor}}"
+            template: "escalamiento_rechazado_por_escalado"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: escalamiento.rechazado_por_escalado
+
+    - name: responder_escalamiento
+      description: Usuario escalado envia los documentos solicitados
+      from:
+        - escalamiento_asignado
+      to: escalamiento_respondido_final
+      from_substate:
+        - en_proceso
+        - sin_opcion_rechazo
+      guards:
+        - type: has_role
+          params:
+            role: abogado_gestionador_escalado
+        - type: is_assigned_to_actor
+        - type: validate_required_fields
+          params:
+            required_fields:
+              - documentos_adjuntos
+      actions:
+        - type: record_escalation_response
+          params:
+            documents: "{{data.documentos_adjuntos}}"
+        - type: notify
+          params:
+            recipients:
+              - "{{instance.parent.current_actor}}"
+            template: "escalamiento_respondido"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: escalamiento.respondido_por_escalado
+
+    # ==========================================================================
+    # TIMEOUTS
+    # ==========================================================================
+    - name: timeout_asignacion
+      description: Timeout automatico en fase de asignacion
+      from:
+        - por_asignar
+        - en_asignacion
+      to: por_asignar
+      guards: []
+      actions:
+        - type: notify
+          params:
+            recipients:
+              - role: supervisor_mintrabajo
+              - role: asignador_responsable
+            template: "timeout_asignacion"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: tramite.timeout_asignacion
+
+    - name: timeout_gestion
+      description: Timeout en fase de gestion
+      from:
+        - para_gestion
+      to: para_gestion
+      guards: []
+      actions:
+        - type: notify
+          params:
+            recipients:
+              - role: supervisor_mintrabajo
+            template: "timeout_gestion"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: tramite.timeout_gestion
+
+    - name: timeout_revision
+      description: Timeout en fase de revision
+      from:
+        - por_revisar
+      to: por_revisar
+      guards: []
+      actions:
+        - type: notify
+          params:
+            recipients:
+              - role: supervisor_mintrabajo
+            template: "timeout_revision"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: tramite.timeout_revision
+
+    - name: timeout_aprobacion
+      description: Timeout en fase de aprobacion
+      from:
+        - por_aprobar
+      to: por_aprobar
+      guards: []
+      actions:
+        - type: notify
+          params:
+            recipients:
+              - role: supervisor_mintrabajo
+            template: "timeout_aprobacion"
+            channels:
+              - email
+              - in_app
+        - type: emit_event
+          params:
+            event_type: tramite.timeout_aprobacion
+
+  # ============================================================================
+  # SISTEMA DE ALERTAS DE VENCIMIENTO (Segun HU-006 Seccion 6)
+  # ============================================================================
+  #
+  # Esquema de alertas para clonaciones:
+  # - Primera alerta:  50% del tiempo restante
+  # - Segunda alerta:  25% del tiempo restante
+  # - Tercera alerta:  1 dia habil (u 8 horas habiles si es en horas)
+  # - Alerta critica:  Dia del vencimiento
+  #
+  # Destinatarios:
+  # - Usuario clonado: recibe alertas sobre vencimiento del clonacion asignado
+  # - Gestionador: recibe alertas cuando un clonacion esta proximo a vencer
+  #
+  # Comportamiento con clonaciones vencidas:
+  # - NO bloquean la gestion del tramite principal
+  # - Permanecen en bandeja del usuario clonado hasta respuesta
+  # ============================================================================
+  alerts:
+    clonacion:
+      - trigger_at_percentage: 50
+        template: "alerta_clonacion_50_porciento"
+        recipients:
+          - clonado
+          - gestionador
+      - trigger_at_percentage: 25
+        template: "alerta_clonacion_25_porciento"
+        recipients:
+          - clonado
+          - gestionador
+      - trigger_at_remaining: "1d"
+        trigger_at_remaining_hours: "8h"
+        template: "alerta_clonacion_1_dia"
+        recipients:
+          - clonado
+          - gestionador
+      - trigger_at_percentage: 0
+        template: "alerta_clonacion_vencimiento"
+        recipients:
+          - clonado
+          - gestionador
+
+    escalamiento:
+      - trigger_at_percentage: 50
+        template: "alerta_escalamiento_50_porciento"
+        recipients:
+          - escalado
+          - gestionador
+      - trigger_at_percentage: 25
+        template: "alerta_escalamiento_25_porciento"
+        recipients:
+          - escalado
+          - gestionador
+      - trigger_at_remaining: "1d"
+        trigger_at_remaining_hours: "8h"
+        template: "alerta_escalamiento_1_dia"
+        recipients:
+          - escalado
+          - gestionador
+      - trigger_at_percentage: 0
+        template: "alerta_escalamiento_vencimiento"
+        recipients:
+          - escalado
+          - gestionador
+
+  # ============================================================================
+  # WEBHOOKS
+  # ============================================================================
+  webhooks:
+    - url: "${WEBHOOK_URL}/mintrabajo/events"
+      events:
+        - state.changed
+        - tramite.radicado
+        - tramite.asignado
+        - tramite.aprobado
+        - clonacion.solicitada
+        - clonacion.aceptada
+        - clonacion.rechazada
+        - clonacion.respondida
+        - clonacion.anulada
+        - escalamiento.solicitado
+        - escalamiento.aceptado
+        - escalamiento.rechazado
+        - escalamiento.respondido
+        - escalamiento.anulado
+      secret: "${WEBHOOK_SECRET}"
+      headers:
+        X-Service: "FlowEngine"
+        X-Workflow: "mintrabajo_flow"
+        X-Project: "SGDEA_DOCUM_POSITIVA"
+      retry_config:
+        max_retries: 3
+        backoff_multiplier: 2
+        initial_interval: 1s
+      active: true
+
+  # ============================================================================
+  # SLA
+  # ============================================================================
+  sla:
+    overall_target: 120h
+    state_targets:
+      por_asignar: 24h
+      en_asignacion: 4h
+      para_gestion: 8h
+      por_revisar: 24h
+      por_aprobar: 24h
+    clonacion_max_percentage: 70
+
+  # ============================================================================
+  # METADATA DEL PROYECTO
+  # ============================================================================
+  metadata:
+    # Informacion del proyecto
+    cliente: "POSITIVA"
+    proyecto: "SGDEA DOCUM - POSITIVA"
+    requerimiento: "Flujo Ministerio del Trabajo"
+    historia_usuario: "HU-006_clonacion_de_Procesos_Min_Trabajo"
+
+    # Versionamiento
+    version: "1.0.0"
+    autor: "Majli M. Labrador R."
+    fecha_creacion: "2025-11-24"
+    ultima_modificacion: "2025-12-01"
+
+    # Clasificacion
+    tags:
+      - mintrabajo
+      - tramites
+      - abogados
+      - gobierno
+      - clonacion
+      - escalamiento
+      - positiva
+    category: "legal_management"
+    department: "ministerio_trabajo"
+
+    # Roles del sistema
+    roles:
+      - id: radicador
+        name: Radicador
+        description: Radica tramites desde correo electronico
+      - id: asignador_responsable
+        name: Asignador Responsable
+        description: Asigna tramites a abogados gestionadores
+      - id: abogado_gestionador
+        name: Abogado Gestionador
+        description: Elabora documento de salida, puede clonar y escalar
+      - id: abogado_gestionador_clonado
+        name: Gestionador Clonado
+        description: Recibe solicitudes de clonacion
+      - id: abogado_gestionador_escalado
+        name: Gestionador Escalado
+        description: Recibe solicitudes de escalamiento
+      - id: abogado_revisor
+        name: Abogado Revisor
+        description: Revisa documentos de salida
+      - id: abogado_aprobador
+        name: Abogado Aprobador
+        description: Aprueba y envia respuesta final
+      - id: supervisor_mintrabajo
+        name: Supervisor MinTrabajo
+        description: Supervisa el flujo y recibe alertas de timeout

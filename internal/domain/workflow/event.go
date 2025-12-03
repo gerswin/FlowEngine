@@ -5,12 +5,12 @@ import (
 )
 
 // Event represents a transition event in a workflow.
-// It defines which states can transition to a destination state via this event.
+// It's an entity that records the history of state changes.
 type Event struct {
-	name        string
-	sources     []State
-	destination State
-	validators  []string // Optional validator function names
+	Name        string   `json:"name"`
+	Sources     []State  `json:"sources"`
+	Destination State    `json:"destination"`
+	Validators  []string `json:"validators"`
 }
 
 // NewEvent creates a new Event.
@@ -23,7 +23,7 @@ func NewEvent(name string, sources []State, destination State) (Event, error) {
 		return Event{}, fmt.Errorf("event must have at least one source state")
 	}
 
-	if destination.id == "" {
+	if destination.ID == "" {
 		return Event{}, fmt.Errorf("destination state cannot be empty")
 	}
 
@@ -32,54 +32,54 @@ func NewEvent(name string, sources []State, destination State) (Event, error) {
 	copy(sourcesCopy, sources)
 
 	return Event{
-		name:        name,
-		sources:     sourcesCopy,
-		destination: destination,
-		validators:  []string{},
+		Name:        name,
+		Sources:     sourcesCopy,
+		Destination: destination,
+		Validators:  []string{},
 	}, nil
 }
 
-// Name returns the event name.
-func (e Event) Name() string {
-	return e.name
+// GetName returns the event name.
+func (e Event) GetName() string {
+	return e.Name
 }
 
-// Sources returns a copy of the source states.
-func (e Event) Sources() []State {
-	sourcesCopy := make([]State, len(e.sources))
-	copy(sourcesCopy, e.sources)
+// GetSources returns a copy of the source states.
+func (e Event) GetSources() []State {
+	sourcesCopy := make([]State, len(e.Sources))
+	copy(sourcesCopy, e.Sources)
 	return sourcesCopy
 }
 
-// Destination returns the destination state.
-func (e Event) Destination() State {
-	return e.destination
+// GetDestination returns the destination state.
+func (e Event) GetDestination() State {
+	return e.Destination
 }
 
-// Validators returns a copy of the validator function names.
-func (e Event) Validators() []string {
-	if e.validators == nil {
+// GetValidators returns a copy of the validator function names.
+func (e Event) GetValidators() []string {
+	if e.Validators == nil {
 		return []string{}
 	}
-	validatorsCopy := make([]string, len(e.validators))
-	copy(validatorsCopy, e.validators)
+	validatorsCopy := make([]string, len(e.Validators))
+	copy(validatorsCopy, e.Validators)
 	return validatorsCopy
 }
 
 // WithValidators returns a new Event with the given validators.
 func (e Event) WithValidators(validators []string) Event {
 	if validators == nil {
-		e.validators = []string{}
+		e.Validators = []string{}
 	} else {
-		e.validators = make([]string, len(validators))
-		copy(e.validators, validators)
+		e.Validators = make([]string, len(validators))
+		copy(e.Validators, validators)
 	}
 	return e
 }
 
 // CanTransitionFrom checks if this event can transition from the given state.
 func (e Event) CanTransitionFrom(state State) bool {
-	for _, source := range e.sources {
+	for _, source := range e.Sources {
 		if source.Equals(state) {
 			return true
 		}
@@ -89,21 +89,21 @@ func (e Event) CanTransitionFrom(state State) bool {
 
 // Validate validates the event.
 func (e Event) Validate() error {
-	if e.name == "" {
+	if e.Name == "" {
 		return fmt.Errorf("event name cannot be empty")
 	}
 
-	if len(e.sources) == 0 {
+	if len(e.Sources) == 0 {
 		return fmt.Errorf("event must have at least one source state")
 	}
 
-	for i, source := range e.sources {
+	for i, source := range e.Sources {
 		if err := source.Validate(); err != nil {
 			return fmt.Errorf("invalid source state at index %d: %w", i, err)
 		}
 	}
 
-	if err := e.destination.Validate(); err != nil {
+	if err := e.Destination.Validate(); err != nil {
 		return fmt.Errorf("invalid destination state: %w", err)
 	}
 
@@ -112,9 +112,9 @@ func (e Event) Validate() error {
 
 // String returns a string representation of the event.
 func (e Event) String() string {
-	sourceIDs := make([]string, len(e.sources))
-	for i, source := range e.sources {
-		sourceIDs[i] = source.ID()
+	sourceIDs := make([]string, len(e.Sources))
+	for i, source := range e.Sources {
+		sourceIDs[i] = source.GetID()
 	}
-	return fmt.Sprintf("Event{name=%s, sources=%v, destination=%s}", e.name, sourceIDs, e.destination.ID())
+	return fmt.Sprintf("Event{name=%s, sources=%v, destination=%s}", e.Name, sourceIDs, e.Destination.GetID())
 }

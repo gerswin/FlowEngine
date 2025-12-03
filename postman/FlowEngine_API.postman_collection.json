@@ -1,0 +1,770 @@
+{
+	"info": {
+		"_postman_id": "flowengine-api-collection",
+		"name": "FlowEngine API",
+		"description": "Complete API collection for FlowEngine - Workflow orchestration system\n\n## Features\n- Create and manage workflows\n- Create and manage workflow instances\n- Execute state transitions\n- Query workflows and instances\n\n## Environment Variables\nMake sure to set up the following variables in your Postman environment:\n- `base_url`: http://localhost:8080\n- `workflow_id`: Will be auto-populated\n- `instance_id`: Will be auto-populated\n- `actor_id`: Your actor/user ID",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Health Check",
+			"item": [
+				{
+					"name": "Health Check",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"health"
+							]
+						},
+						"description": "Check if the API server is healthy and running"
+					},
+					"response": []
+				}
+			],
+			"description": "Health check endpoints"
+		},
+		{
+			"name": "Workflows",
+			"item": [
+				{
+					"name": "Create Workflow - Simple Approval",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"// Auto-save workflow_id for subsequent requests",
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.environment.set(\"workflow_id\", jsonData.id);",
+									"    console.log(\"Workflow ID saved: \" + jsonData.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Proceso de Aprobación\",\n  \"description\": \"Workflow simple de aprobación con 3 estados\",\n  \"created_by\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"initial_state\": {\n    \"id\": \"draft\",\n    \"name\": \"Borrador\",\n    \"description\": \"Documento en borrador\",\n    \"is_final\": false\n  },\n  \"states\": [\n    {\n      \"id\": \"draft\",\n      \"name\": \"Borrador\",\n      \"description\": \"Documento en borrador\",\n      \"is_final\": false\n    },\n    {\n      \"id\": \"review\",\n      \"name\": \"En Revisión\",\n      \"description\": \"Documento siendo revisado\",\n      \"is_final\": false\n    },\n    {\n      \"id\": \"approved\",\n      \"name\": \"Aprobado\",\n      \"description\": \"Documento aprobado\",\n      \"is_final\": true\n    },\n    {\n      \"id\": \"rejected\",\n      \"name\": \"Rechazado\",\n      \"description\": \"Documento rechazado\",\n      \"is_final\": true\n    }\n  ],\n  \"events\": [\n    {\n      \"name\": \"submit\",\n      \"sources\": [\"draft\"],\n      \"destination\": \"review\"\n    },\n    {\n      \"name\": \"approve\",\n      \"sources\": [\"review\"],\n      \"destination\": \"approved\"\n    },\n    {\n      \"name\": \"reject\",\n      \"sources\": [\"review\"],\n      \"destination\": \"rejected\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/workflows",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"workflows"
+							]
+						},
+						"description": "Create a simple approval workflow with draft, review, approved, and rejected states"
+					},
+					"response": []
+				},
+				{
+					"name": "Create Workflow - Complex Purchase Order",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.environment.set(\"workflow_id\", jsonData.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Purchase Order Approval\",\n  \"description\": \"Complete purchase order workflow with multiple approval levels\",\n  \"created_by\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"initial_state\": {\n    \"id\": \"draft\",\n    \"name\": \"Draft\",\n    \"description\": \"PO in draft state\",\n    \"is_final\": false\n  },\n  \"states\": [\n    {\n      \"id\": \"draft\",\n      \"name\": \"Draft\",\n      \"description\": \"PO in draft state\",\n      \"is_final\": false\n    },\n    {\n      \"id\": \"manager_review\",\n      \"name\": \"Manager Review\",\n      \"description\": \"Waiting for manager approval\",\n      \"is_final\": false\n    },\n    {\n      \"id\": \"finance_review\",\n      \"name\": \"Finance Review\",\n      \"description\": \"Waiting for finance approval\",\n      \"is_final\": false\n    },\n    {\n      \"id\": \"approved\",\n      \"name\": \"Approved\",\n      \"description\": \"PO approved and ready for procurement\",\n      \"is_final\": true\n    },\n    {\n      \"id\": \"rejected\",\n      \"name\": \"Rejected\",\n      \"description\": \"PO rejected\",\n      \"is_final\": true\n    },\n    {\n      \"id\": \"cancelled\",\n      \"name\": \"Cancelled\",\n      \"description\": \"PO cancelled by requester\",\n      \"is_final\": true\n    }\n  ],\n  \"events\": [\n    {\n      \"name\": \"submit\",\n      \"sources\": [\"draft\"],\n      \"destination\": \"manager_review\"\n    },\n    {\n      \"name\": \"manager_approve\",\n      \"sources\": [\"manager_review\"],\n      \"destination\": \"finance_review\"\n    },\n    {\n      \"name\": \"manager_reject\",\n      \"sources\": [\"manager_review\"],\n      \"destination\": \"rejected\"\n    },\n    {\n      \"name\": \"finance_approve\",\n      \"sources\": [\"finance_review\"],\n      \"destination\": \"approved\"\n    },\n    {\n      \"name\": \"finance_reject\",\n      \"sources\": [\"finance_review\"],\n      \"destination\": \"rejected\"\n    },\n    {\n      \"name\": \"cancel\",\n      \"sources\": [\"draft\", \"manager_review\"],\n      \"destination\": \"cancelled\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/workflows",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"workflows"
+							]
+						},
+						"description": "Create a complex purchase order workflow with multiple approval levels"
+					},
+					"response": []
+				},
+				{
+					"name": "List All Workflows",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/workflows",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"workflows"
+							]
+						},
+						"description": "Get all workflows in the system"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Workflow by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/workflows/{{workflow_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"workflows",
+								"{{workflow_id}}"
+							]
+						},
+						"description": "Get detailed information about a specific workflow"
+					},
+					"response": []
+				}
+			],
+			"description": "Workflow management endpoints - create, read, update, and delete workflow definitions"
+		},
+		{
+			"name": "Instances",
+			"item": [
+				{
+					"name": "Create Instance",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"// Auto-save instance_id for subsequent requests",
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.environment.set(\"instance_id\", jsonData.id);",
+									"    console.log(\"Instance ID saved: \" + jsonData.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"// Set default actor_id if not set",
+									"if (!pm.environment.get(\"actor_id\")) {",
+									"    pm.environment.set(\"actor_id\", \"550e8400-e29b-41d4-a716-446655440000\");",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"workflow_id\": \"{{workflow_id}}\",\n  \"started_by\": \"{{actor_id}}\",\n  \"data\": {\n    \"title\": \"Propuesta de Proyecto Q1 2025\",\n    \"requester\": \"Juan Pérez\",\n    \"department\": \"IT\",\n    \"amount\": 50000,\n    \"description\": \"Implementación de nuevo sistema de gestión\"\n  },\n  \"variables\": {\n    \"priority\": \"high\",\n    \"sla_hours\": 48,\n    \"approvers\": [\"manager\", \"director\"]\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/instances",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"instances"
+							]
+						},
+						"description": "Create a new workflow instance from an existing workflow"
+					},
+					"response": []
+				},
+				{
+					"name": "Create Instance - Purchase Order",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.environment.set(\"instance_id\", jsonData.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"workflow_id\": \"{{workflow_id}}\",\n  \"started_by\": \"{{actor_id}}\",\n  \"data\": {\n    \"po_number\": \"PO-2025-001\",\n    \"vendor\": \"Acme Corp\",\n    \"items\": [\n      {\n        \"description\": \"Laptops Dell XPS 15\",\n        \"quantity\": 10,\n        \"unit_price\": 2000,\n        \"total\": 20000\n      },\n      {\n        \"description\": \"Monitors 27 inch\",\n        \"quantity\": 10,\n        \"unit_price\": 500,\n        \"total\": 5000\n      }\n    ],\n    \"total_amount\": 25000,\n    \"requester\": \"John Smith\",\n    \"department\": \"IT\",\n    \"delivery_date\": \"2025-02-15\"\n  },\n  \"variables\": {\n    \"urgency\": \"normal\",\n    \"budget_code\": \"IT-2025-Q1\",\n    \"approval_threshold\": 10000\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/instances",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"instances"
+							]
+						},
+						"description": "Create a purchase order instance"
+					},
+					"response": []
+				},
+				{
+					"name": "List All Instances",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/instances",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"instances"
+							]
+						},
+						"description": "Get all workflow instances"
+					},
+					"response": []
+				},
+				{
+					"name": "List Instances by Workflow",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/instances?workflow_id={{workflow_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"instances"
+							],
+							"query": [
+								{
+									"key": "workflow_id",
+									"value": "{{workflow_id}}"
+								}
+							]
+						},
+						"description": "Get all instances for a specific workflow"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Instance by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/instances/{{instance_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"instances",
+								"{{instance_id}}"
+							]
+						},
+						"description": "Get detailed information about a specific instance including full transition history"
+					},
+					"response": []
+				}
+			],
+			"description": "Instance management endpoints - create and query workflow instances"
+		},
+		{
+			"name": "Transitions",
+			"item": [
+				{
+					"name": "Submit for Review",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"event\": \"submit\",\n  \"actor_id\": \"{{actor_id}}\",\n  \"reason\": \"Enviando documento para revisión\",\n  \"feedback\": \"Listo para revisión del equipo\",\n  \"metadata\": {\n    \"submitted_at\": \"2025-01-19T10:30:00Z\",\n    \"urgency\": \"high\"\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/instances/{{instance_id}}/transitions",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"instances",
+								"{{instance_id}}",
+								"transitions"
+							]
+						},
+						"description": "Execute the 'submit' transition - from draft to review"
+					},
+					"response": []
+				},
+				{
+					"name": "Approve",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"event\": \"approve\",\n  \"actor_id\": \"660f9511-f3ac-52e5-b827-557766551111\",\n  \"reason\": \"Propuesta aprobada por el comité ejecutivo\",\n  \"feedback\": \"Excelente propuesta, adelante con el proyecto. El presupuesto está aprobado.\",\n  \"metadata\": {\n    \"reviewer\": \"María García\",\n    \"review_score\": 95,\n    \"approved_amount\": 50000,\n    \"conditions\": \"Entregar reporte mensual de avance\"\n  },\n  \"data\": {\n    \"approval_date\": \"2025-01-19\",\n    \"approved_by\": \"María García\",\n    \"approved_amount\": 50000\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/instances/{{instance_id}}/transitions",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"instances",
+								"{{instance_id}}",
+								"transitions"
+							]
+						},
+						"description": "Execute the 'approve' transition - from review to approved"
+					},
+					"response": []
+				},
+				{
+					"name": "Reject",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"event\": \"reject\",\n  \"actor_id\": \"660f9511-f3ac-52e5-b827-557766551111\",\n  \"reason\": \"Propuesta rechazada - presupuesto insuficiente\",\n  \"feedback\": \"El presupuesto solicitado excede el disponible. Por favor revisar y reenviar con monto ajustado.\",\n  \"metadata\": {\n    \"reviewer\": \"María García\",\n    \"rejection_reason\": \"budget_exceeded\",\n    \"max_budget\": 30000,\n    \"requested_budget\": 50000\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/instances/{{instance_id}}/transitions",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"instances",
+								"{{instance_id}}",
+								"transitions"
+							]
+						},
+						"description": "Execute the 'reject' transition - from review to rejected"
+					},
+					"response": []
+				},
+				{
+					"name": "Manager Approve (PO)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"event\": \"manager_approve\",\n  \"actor_id\": \"770fa622-g4bd-63f6-c938-668877662222\",\n  \"reason\": \"Approved by IT Manager\",\n  \"feedback\": \"Equipment is needed and within budget\",\n  \"metadata\": {\n    \"manager\": \"Bob Johnson\",\n    \"department\": \"IT\",\n    \"approval_level\": 1\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/instances/{{instance_id}}/transitions",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"instances",
+								"{{instance_id}}",
+								"transitions"
+							]
+						},
+						"description": "Manager approval for purchase order"
+					},
+					"response": []
+				},
+				{
+					"name": "Finance Approve (PO)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"event\": \"finance_approve\",\n  \"actor_id\": \"880fb733-h5ce-74g7-d049-779988773333\",\n  \"reason\": \"Approved by Finance Department\",\n  \"feedback\": \"Budget verified and approved\",\n  \"metadata\": {\n    \"finance_officer\": \"Alice Chen\",\n    \"budget_verified\": true,\n    \"payment_terms\": \"Net 30\",\n    \"approval_level\": 2\n  },\n  \"data\": {\n    \"final_approval_date\": \"2025-01-19\",\n    \"purchase_order_number\": \"PO-2025-001-APPROVED\"\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/instances/{{instance_id}}/transitions",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"instances",
+								"{{instance_id}}",
+								"transitions"
+							]
+						},
+						"description": "Finance approval for purchase order - final approval"
+					},
+					"response": []
+				}
+			],
+			"description": "State transition endpoints - execute workflow transitions with metadata and feedback"
+		},
+		{
+			"name": "Complete Workflow Examples",
+			"item": [
+				{
+					"name": "Example 1: Full Approval Flow",
+					"item": [
+						{
+							"name": "1. Create Workflow",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											"if (pm.response.code === 201) {",
+											"    var jsonData = pm.response.json();",
+											"    pm.environment.set(\"workflow_id\", jsonData.id);",
+											"    console.log(\"✅ Workflow created: \" + jsonData.id);",
+											"}"
+										],
+										"type": "text/javascript"
+									}
+								}
+							],
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Proceso de Aprobación\",\n  \"description\": \"Workflow simple de aprobación\",\n  \"created_by\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"initial_state\": {\n    \"id\": \"draft\",\n    \"name\": \"Borrador\",\n    \"is_final\": false\n  },\n  \"states\": [\n    {\"id\": \"draft\", \"name\": \"Borrador\", \"is_final\": false},\n    {\"id\": \"review\", \"name\": \"En Revisión\", \"is_final\": false},\n    {\"id\": \"approved\", \"name\": \"Aprobado\", \"is_final\": true},\n    {\"id\": \"rejected\", \"name\": \"Rechazado\", \"is_final\": true}\n  ],\n  \"events\": [\n    {\"name\": \"submit\", \"sources\": [\"draft\"], \"destination\": \"review\"},\n    {\"name\": \"approve\", \"sources\": [\"review\"], \"destination\": \"approved\"},\n    {\"name\": \"reject\", \"sources\": [\"review\"], \"destination\": \"rejected\"}\n  ]\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/v1/workflows",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"v1",
+										"workflows"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "2. Create Instance",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											"if (pm.response.code === 201) {",
+											"    var jsonData = pm.response.json();",
+											"    pm.environment.set(\"instance_id\", jsonData.id);",
+											"    console.log(\"✅ Instance created: \" + jsonData.id);",
+											"}"
+										],
+										"type": "text/javascript"
+									}
+								}
+							],
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"workflow_id\": \"{{workflow_id}}\",\n  \"started_by\": \"{{actor_id}}\",\n  \"data\": {\n    \"title\": \"Test Document\",\n    \"requester\": \"Test User\"\n  }\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/v1/instances",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"v1",
+										"instances"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "3. Submit for Review",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											"if (pm.response.code === 200) {",
+											"    console.log(\"✅ Transition to review successful\");",
+											"}"
+										],
+										"type": "text/javascript"
+									}
+								}
+							],
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"event\": \"submit\",\n  \"actor_id\": \"{{actor_id}}\",\n  \"reason\": \"Ready for review\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/v1/instances/{{instance_id}}/transitions",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"v1",
+										"instances",
+										"{{instance_id}}",
+										"transitions"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "4. Approve",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											"if (pm.response.code === 200) {",
+											"    console.log(\"✅ Transition to approved successful\");",
+											"}"
+										],
+										"type": "text/javascript"
+									}
+								}
+							],
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"event\": \"approve\",\n  \"actor_id\": \"660f9511-f3ac-52e5-b827-557766551111\",\n  \"reason\": \"Approved\",\n  \"feedback\": \"Looks good!\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/v1/instances/{{instance_id}}/transitions",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"v1",
+										"instances",
+										"{{instance_id}}",
+										"transitions"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "5. Get Final State",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											"if (pm.response.code === 200) {",
+											"    var jsonData = pm.response.json();",
+											"    console.log(\"✅ Final state: \" + jsonData.current_state);",
+											"    console.log(\"   Transitions: \" + jsonData.transition_count);",
+											"}"
+										],
+										"type": "text/javascript"
+									}
+								}
+							],
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "{{base_url}}/api/v1/instances/{{instance_id}}",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"v1",
+										"instances",
+										"{{instance_id}}"
+									]
+								}
+							},
+							"response": []
+						}
+					],
+					"description": "Complete workflow: Create → Submit → Approve. Run requests in order."
+				}
+			],
+			"description": "Complete end-to-end workflow examples - run these in sequence to see full workflow execution"
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Set default values if not set",
+					"if (!pm.environment.get(\"base_url\")) {",
+					"    pm.environment.set(\"base_url\", \"http://localhost:8080\");",
+					"}",
+					"if (!pm.environment.get(\"actor_id\")) {",
+					"    pm.environment.set(\"actor_id\", \"550e8400-e29b-41d4-a716-446655440000\");",
+					"}"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8080",
+			"type": "string"
+		},
+		{
+			"key": "workflow_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "instance_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "actor_id",
+			"value": "550e8400-e29b-41d4-a716-446655440000",
+			"type": "string"
+		}
+	]
+}

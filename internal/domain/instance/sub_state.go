@@ -20,6 +20,15 @@ type SubState struct {
 	description string
 }
 
+// RestoreSubState creates a SubState from ID without validation.
+// Should only be used by persistence layer.
+func RestoreSubState(id string) SubState {
+	return SubState{
+		id:   id,
+		name: id, // Default name to ID if not persisted
+	}
+}
+
 // NewSubState creates a new SubState with the given ID and name.
 func NewSubState(id, name string) (SubState, error) {
 	if id == "" {
