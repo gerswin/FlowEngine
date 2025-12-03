@@ -4,7 +4,7 @@ FROM golang:1.22-alpine AS builder
 WORKDIR /app
 
 # Install ca-certificates for HTTPS
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates git
 
 # Copy go mod files
 COPY go.mod go.sum ./
