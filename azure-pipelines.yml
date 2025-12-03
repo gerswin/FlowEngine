@@ -1,0 +1,118 @@
+trigger:
+- nothing
+
+pool:
+  vmImage: ubuntu-latest
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: Infraestructura-DevOps/devops_util_pipeline
+
+parameters:
+- name: Environments
+  type: object
+  default:
+    DEFAULT: VALUE
+
+variables:
+  GCP_PROJECT_ID: 'positiva-sgda-cap'
+  GCP_REGION: 'us-east1'
+  CLOUD_RUN_SERVICE: 'ms-flow-engine'
+  IMAGE_NAME: 'ms-flow-engine'
+  IMAGE_TAG: 'latest'
+
+stages:
+- stage: Build_Docker
+  jobs: 
+  - job: Build_Docker 
+    steps:
+    - template: steps-docker-gcp.yml@templates
+      parameters:
+        REPOSITORY_NAME_GCP: $(DOCKER_REPOSITORY_NAME_GCP_DEV)
+        REPOSITORY_NAME: $(DOCKER_REPOSITORY_NAME)
+        DOCKER_CONTAINER_REGISTRY: ar-docker-gpc-preprd
+
+# ----------------------------
+# 3. Deploy / Redeploy Cloud Run
+# ----------------------------
+- stage: Deploy_CloudRun
+  dependsOn: Build_Docker
+  condition: succeeded()
+  jobs:
+      - job: Deploy
+        variables:
+          # Recupera la variable de salida del job previo
+          IMAGE_URI: $[ stageDependencies.Build_Docker.Build_Docker.outputs['setImageVar.IMAGE_URI'] ]
+        steps:
+          # Descarga la clave de la Service Account (Secure File)
+          - task: DownloadSecureFile@1
+            name: gcpkey
+            inputs:
+              secureFile: 'positiva-sgda-cap-557b70878175.json'
+            displayName: "Download GCP SA key"
+
+          - bash: |
+              set -euo pipefail
+
+              # Instalar gcloud si no existe en el agente
+              if ! command -v gcloud >/dev/null 2>&1; then
+                echo "Instalando Google Cloud SDK..."
+                curl -sSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-474.0.0-linux-x86_64.tar.gz -o gcloud.tgz
+                tar xzf gcloud.tgz
+                ./google-cloud-sdk/install.sh --quiet
+                export PATH="$PWD/google-cloud-sdk/bin:$PATH"
+              fi
+
+              echo "Autenticando en GCP..."
+              gcloud auth activate-service-account --key-file="$(gcpkey.secureFilePath)"
+              gcloud config set project $(GCP_PROJECT_ID)
+              gcloud config set run/region $(GCP_REGION)
+
+              # Imagen a desplegar
+              IMAGE_URI="us-east1-docker.pkg.dev/positiva-sgda-cap/positiva-sgdea-preprod-docker-repositry/$(IMAGE_NAME):$(IMAGE_TAG)"
+              #IMAGE_URI="${IMAGE_URI:-$(DOCKER_REG_PROD):$(IMAGE_TAG)}"
+              echo "Redeploy Cloud Run $(CLOUD_RUN_SERVICE) -> ${IMAGE_URI}"
+
+              envs='${{ convertToJson(parameters.Environments) }}'
+              RAW_VARS=$(echo $envs | jq -r 'to_entries | map(select(.key != "DEFAULT" and .key != "OTRA_KEY")) | map("\(.key)=\(.value)") | join(", ")')
+              echo $RAW_VARS
+
+              if [ -z "$RAW_VARS" ]; then
+                echo "No se encontraron variables de entorno para actualizar, desplegando sin modificar..."
+                gcloud run deploy "$CLOUD_RUN_SERVICE" \
+                  --image "$IMAGE_URI" \
+                  --platform managed \
+                  --region "$GCP_REGION" \
+                  --revision-suffix="$BUILD_BUILDID" \
+                  --quiet
+              else
+                echo "Variables de entorno a actualizar en Cloud Run:"
+                echo "$RAW_VARS"
+                gcloud run deploy "$CLOUD_RUN_SERVICE" \
+                  --image "$IMAGE_URI" \
+                  --platform managed \
+                  --region "$GCP_REGION" \
+                  --revision-suffix="$BUILD_BUILDID" \
+                  --update-env-vars "$RAW_VARS" \
+                  --quiet
+              fi
+
+              echo "Despliegue enviado. Obteniendo URL..."
+              SRV_URL=$(gcloud run services describe $(CLOUD_RUN_SERVICE) --region $(GCP_REGION) --format='value(status.url)')
+              echo "Service URL: $SRV_URL"
+            displayName: "Redeploy Cloud Run"
+
+          # (Opcional) Health check
+          - ${{ if eq(variables.DEBUG, 'true') }}:
+            - bash: |
+                set -e
+                URL=$(gcloud run services describe $(CLOUD_RUN_SERVICE) --region $(GCP_REGION) --format='value(status.url)')
+                echo "Probing $URL ..."
+                for i in {1..12}; do
+                  code=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || true)
+                  echo "Attempt $i -> $code"
+                  [ "$code" = "200" ] && exit 0
+                  sleep 5
+                done
