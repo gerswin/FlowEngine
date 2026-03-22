@@ -1,40 +1,49 @@
 # FlowEngine - Documento de Diseño Técnico
 
+> **Ultima actualizacion**: 2026-03-21
+
 ## 1. Overview del Sistema
 
 ### 1.1 Propósito
 
 **FlowEngine** es una librería/servicio de orquestación de workflows con máquina de estados finitos (FSM) que proporciona:
 
-- ✅ **Persistencia híbrida** (Redis + PostgreSQL) para alto rendimiento
+#### Implementado
+- ✅ **Persistencia híbrida** (Redis cache + PostgreSQL + In-Memory para desarrollo)
 - ✅ **Múltiples instancias** de workflows ejecutándose en paralelo
-- ✅ **Subprocesos jerárquicos** (procesos padre-hijo)
-- ✅ **Workflows configurables** vía YAML/JSON con hot-reload
-- ✅ **REST API** completa para gestión de workflows
-- ✅ **Eventos externos** (webhooks, message queues)
-- ✅ **Sistema de actores y roles** con permisos granulares
-- ✅ **Timers y escalamientos** automáticos
+- ✅ **Subprocesos jerárquicos** (procesos padre-hijo, clonación)
+- ✅ **Workflows configurables** vía JSON:API y YAML
+- ✅ **REST API completa** con JSON:API 1.0, JWT auth, paginación DB-level
+- ✅ **Motor de Guards** — 14 guards built-in que validan condiciones pre-transición
+- ✅ **Motor de Actions** — 10 actions built-in que ejecutan efectos post-transición
+- ✅ **Required Data** — Campos obligatorios por transición, validados automáticamente
+- ✅ **Sistema de eventos** — MultiDispatcher (InMemory + Log + Webhook)
+- ✅ **Webhook delivery** — Entrega asíncrona con HMAC signing y reintentos
+- ✅ **Timers y scheduler** con retry policy (backoff exponencial)
 - ✅ **Subestados jerárquicos** para tracking detallado (R17)
-- ✅ **Escalamientos manuales** a departamentos externos (R18)
-- ✅ **Reclasificación de instancias** sin cambio de estado (R19)
-- ✅ **Guards de transición avanzados** con lógica customizable (R20)
-- ✅ **Plantillas de workflows** reutilizables (R21)
-- ✅ **Import/Export** de workflows en YAML/JSON (R22)
 - ✅ **Metadata extendida** en transiciones con validación (R23)
 - ✅ **Arquitectura hexagonal** con código limpio y testeable
+- ✅ **Mapeo de errores de dominio** a HTTP status codes (JSON:API)
+- ✅ **331 tests** (domain, handler, webhook dispatcher)
+
+#### Planificado (no implementado aún)
+- ⬚ **RBAC** — JWT auth existe pero no se validan roles en endpoints/transiciones
+- ⬚ **Sistema de actores** — Dominio actor/ está vacío
+- ⬚ **Prometheus metrics** / OpenTelemetry tracing
+- ⬚ **RabbitMQ / Kafka** dispatchers (MultiDispatcher listo para agregarlos)
+- ⬚ **Config management** centralizado
+- ⬚ **Diagrama Mermaid** del workflow (R1.2.4)
 
 ### 1.2 Tecnologías Principales
 
-- **Lenguaje**: Go 1.21+
+- **Lenguaje**: Go 1.24+
 - **Framework HTTP**: Gin
 - **Base de datos**: PostgreSQL 15+
 - **Caché**: Redis 7+
-- **Message Queue**: RabbitMQ / Kafka
-- **FSM Base**: looplab/fsm
-- **Migraciones**: golang-migrate
-- **Testing**: testify, testcontainers
-- **Observabilidad**: OpenTelemetry, Prometheus
-- **Deployment**: Docker, Kubernetes
+- **Event System**: MultiDispatcher (InMemory + LogDispatcher + WebhookDispatcher)
+- **Testing**: testify, mockery
+- **Logging**: slog/JSON estructurado
+- **Deployment**: Docker, Docker Compose
 
 ### 1.3 Casos de Uso Principales
 
@@ -81,116 +90,117 @@
 ```mermaid
 graph TB
     subgraph "External Clients"
-        HTTP[HTTP REST Clients]
-        CLI[CLI Tools]
-        WH[External Webhooks]
+        HTTP[HTTP REST Clients / Bruno]
+        CLI[CLI Tools / Emulator]
     end
 
     subgraph "Infrastructure Layer"
         subgraph "HTTP Adapters"
-            GIN[Gin Router]
-            HAND[HTTP Handlers]
-            MW[Middlewares]
+            GIN[Gin Router + JSON:API]
+            HAND[Handlers: Workflow, Instance]
+            MW[Middleware: JWT Auth, CORS, Logger, RequestID]
         end
 
         subgraph "Persistence Adapters"
-            REDIS[(Redis Cache)]
-            PG[(PostgreSQL)]
-            HYBRID[Hybrid Repository]
+            PG[(PostgreSQL + Cache)]
+            MEM[(In-Memory Repos)]
         end
 
         subgraph "Messaging Adapters"
-            RMQ[RabbitMQ Publisher]
-            KAFKA[Kafka Publisher]
-            WEBHOOK[Webhook Client]
+            MULTI[MultiDispatcher]
+            LOG_D[LogDispatcher]
+            WH_D[WebhookDispatcher]
         end
 
-        subgraph "Config Adapters"
-            YAML[YAML Loader]
-            JSON[JSON Loader]
+        subgraph "Parser"
+            YAML[YAML Parser]
+        end
+
+        subgraph "Scheduler"
+            TIMER_W[Timer Worker + Retry Policy]
         end
     end
 
     subgraph "Application Layer"
         subgraph "Use Cases"
-            UC1[Create Instance]
-            UC2[Trigger Event]
-            UC3[Query Instances]
-            UC4[Spawn Subprocess]
-        end
-
-        subgraph "Ports Definitions"
-            REPO_PORT[Repository Port]
-            EVENT_PORT[Event Dispatcher Port]
-            LOCK_PORT[Locker Port]
+            UC1[Create/Get/List Workflow]
+            UC2[Create/Get/List Instance]
+            UC3[Transition Instance]
+            UC4[Clone Instance]
+            UC5[Transition History]
         end
     end
 
     subgraph "Domain Layer"
         subgraph "Aggregates"
-            WF[Workflow Aggregate]
-            INST[Instance Aggregate]
+            WF[Workflow: States, Events, Guards, Actions, RequiredData]
+            INST[Instance: Data, Variables, Transitions, SubStates]
+        end
+
+        subgraph "Engine"
+            ENG[Guard/Action Engine: 14 guards + 10 actions]
         end
 
         subgraph "Value Objects"
-            STATE[State]
-            EVENT[Event]
-            VERSION[Version]
-        end
-
-        subgraph "Domain Services"
-            VALIDATOR[Transition Validator]
-            ACTOR_SVC[Actor Service]
+            STATE[State, Event, Version, GuardConfig, ActionConfig]
+            VO[ID, Timestamp, ListQuery, TransitionMetadata]
         end
 
         subgraph "Domain Events"
-            DE1[Instance Created]
-            DE2[State Changed]
-            DE3[Instance Completed]
+            DE[InstanceCreated, StateChanged, SubStateChanged, Completed, Canceled, Failed, Paused, Resumed]
         end
     end
 
     HTTP --> GIN
     CLI --> GIN
-    WH --> GIN
 
-    GIN --> HAND
-    HAND --> MW
-    HAND --> UC1
-    HAND --> UC2
-    HAND --> UC3
+    GIN --> MW --> HAND
+    HAND --> UC1 & UC2 & UC3 & UC4 & UC5
 
-    UC1 --> REPO_PORT
-    UC2 --> REPO_PORT
-    UC2 --> EVENT_PORT
-    UC2 --> LOCK_PORT
-    UC3 --> REPO_PORT
+    UC3 --> ENG
+    UC1 & UC2 & UC3 & UC4 --> PG
+    UC1 & UC2 & UC3 & UC4 --> MEM
 
-    REPO_PORT -.implements.-> HYBRID
-    EVENT_PORT -.implements.-> RMQ
-    EVENT_PORT -.implements.-> KAFKA
-    LOCK_PORT -.implements.-> REDIS
-
-    HYBRID --> REDIS
-    HYBRID --> PG
+    UC3 --> MULTI
+    MULTI --> LOG_D
+    MULTI --> WH_D
 
     UC1 --> WF
-    UC2 --> INST
-    UC2 --> WF
-
-    INST --> STATE
-    INST --> VERSION
-    INST --> DE1
-    INST --> DE2
-
-    WF --> STATE
-    WF --> EVENT
+    UC3 --> INST & WF
+    ENG --> INST
 
     YAML --> WF
-    JSON --> WF
 
-    RMQ --> WH
-    WEBHOOK --> WH
+    TIMER_W --> UC3
+```
+
+### 2.1.1 Flujo de Ejecución de una Transición
+
+```
+Request POST /instances/:id/transitions
+    │
+    ▼
+┌─ JWT Auth Middleware ─┐
+│  Validate Bearer token │
+└───────────┬───────────┘
+            ▼
+┌─ TransitionInstanceUseCase ─────────────────┐
+│  1. Parse IDs + validate command             │
+│  2. Load instance from repo                  │
+│  3. Load workflow from repo                  │
+│  4. Validate event exists + can transition   │
+│  5. Apply transition data (cmd.Data)         │
+│  6. ► Evaluate Guards (fail → 400)           │
+│  7. ► Validate RequiredData (fail → 400)     │
+│  8. Execute domain transition                │
+│  9. ► Execute Actions (post-transition)      │
+│  10. Save instance                           │
+│  11. Dispatch domain events                  │
+│      → MultiDispatcher                       │
+│        → InMemoryDispatcher (collect)        │
+│        → LogDispatcher (audit log)           │
+│        → WebhookDispatcher (async HTTP POST) │
+└──────────────────────────────────────────────┘
 ```
 
 ### 2.2 Diagrama de Flujo de una Transición
@@ -200,53 +210,51 @@ sequenceDiagram
     participant Client
     participant Handler
     participant UseCase
-    participant Locker
+    participant Engine
     participant Repository
-    participant Cache
-    participant DB
     participant Instance
     participant EventBus
 
-    Client->>Handler: POST /instances/{id}/events
-    Handler->>UseCase: Execute(TriggerEventCommand)
-    UseCase->>Locker: Lock(instanceID)
-    Locker-->>UseCase: Lock acquired
+    Client->>Handler: POST /instances/{id}/transitions
+    Note over Handler: JWT Auth Middleware validates token
+    Handler->>UseCase: Execute(TransitionCommand)
 
     UseCase->>Repository: FindByID(instanceID)
-    Repository->>Cache: Get(instanceID)
-
-    alt Cache Hit
-        Cache-->>Repository: Instance data
-    else Cache Miss
-        Repository->>DB: SELECT * FROM instances
-        DB-->>Repository: Instance row
-        Repository->>Cache: Set(instance)
-    end
-
+    Note over Repository: Cache read-through (Redis → PostgreSQL)
     Repository-->>UseCase: Instance aggregate
 
-    UseCase->>Instance: Transition(event, actor)
-    Instance->>Instance: Validate transition
-    Instance->>Instance: Change state
-    Instance->>Instance: Increment version
-    Instance->>Instance: Add domain event
+    UseCase->>Repository: FindByID(workflowID)
+    Repository-->>UseCase: Workflow (with guards, actions, required_data)
+
+    UseCase->>Instance: UpdateData(cmd.Data)
+    Note over Instance: Apply transition data first
+
+    UseCase->>Engine: EvaluateGuards(instance, guards)
+    alt Guard fails
+        Engine-->>UseCase: Error (field_equals, has_role, etc.)
+        UseCase-->>Handler: 400 INVALID_INPUT
+        Handler-->>Client: JSON:API error response
+    end
+    Engine-->>UseCase: Guards passed
+
+    UseCase->>Instance: Transition(toState, event, actor, metadata, requiredData)
+    Note over Instance: Validate required_data fields
+    Instance->>Instance: Change state + increment version
+    Instance->>Instance: Record domain events
     Instance-->>UseCase: Success
 
+    UseCase->>Engine: ExecuteActions(instance, actions)
+    Note over Engine: set_metadata, increment_field, mark_as_approved, etc.
+
     UseCase->>Repository: Save(instance)
-    Repository->>Cache: Set(instance)
-    Repository->>DB: UPDATE instances (with version check)
-    DB-->>Repository: OK
+    Note over Repository: Optimistic locking (version check)
+    Repository-->>UseCase: OK
 
-    UseCase->>Instance: DomainEvents()
-    Instance-->>UseCase: [StateChanged event]
+    UseCase->>EventBus: DispatchBatch(domainEvents)
+    Note over EventBus: MultiDispatcher → Log + Webhook (async)
 
-    UseCase->>EventBus: Dispatch(StateChanged)
-    EventBus->>EventBus: Publish to RabbitMQ
-    EventBus->>EventBus: Send webhooks
-
-    UseCase->>Locker: Unlock(instanceID)
-    UseCase-->>Handler: TriggerEventResult
-    Handler-->>Client: 200 OK {state, version}
+    UseCase-->>Handler: TransitionResult
+    Handler-->>Client: 200 OK (JSON:API resource)
 ```
 
 ### 2.3 Diagrama de Datos (PostgreSQL)
@@ -3713,20 +3721,67 @@ Ver `docs/architecture/adr/` para Architecture Decision Records detallados.
 
 ---
 
-**Versión**: 2.0
-**Fecha**: 2025-11-10
+**Version**: 3.0
+**Fecha**: 2026-03-21
 **Autores**: FlowEngine Team
 
-**Changelog v2.0**:
-- R17: Agregado sistema de subestados jerárquicos
+**Changelog v3.0** (2026-03-21):
+- Motor de Guards (14 built-in) y Actions (10 built-in) con registry extensible
+- Required Data: campos obligatorios por transicion validados en dominio
+- JSON:API 1.0 en todas las respuestas
+- JWT authentication en todos los endpoints protegidos
+- Mapeo de errores de dominio a HTTP status (DomainError → JSON:API errors)
+- Paginacion DB-level con COUNT(*) OVER() (reemplaza paginacion in-memory)
+- Endpoint GET /instances/:id/history para historial de transiciones
+- WebhookDispatcher con HMAC signing, reintentos y entrega asincrona
+- MultiDispatcher + LogDispatcher para composicion de event bus
+- Timer retry policy con backoff exponencial (30s, 60s, 120s...)
+- Timer repository in-memory (scheduler funciona sin Postgres)
+- Postgres workflow repo completo (FindByName, FindAll, etc. — eran stubs)
+- Cache hydration en workflow FindByID (era no-op)
+- JOIN workflows para resolver workflow name en instancias (era "unknown")
+- Refactoring: instanceRow/workflowRow, columnConstants, error handling
+- 331 tests (40 handler tests, 10 webhook tests, 281 domain/infra tests)
+- Coleccion Bruno con 29 requests cubriendo los 12 endpoints
+- Documentacion README y API quickstart actualizados
+
+**Changelog v2.0** (2025-11-10):
+- R17: Agregado sistema de subestados jerarquicos
 - R18: Agregado sistema de escalamientos manuales
-- R19: Agregado soporte para reclasificación de instancias
-- R20: Agregado sistema de guards de transición avanzados
+- R19: Agregado soporte para reclasificacion de instancias
+- R20: Agregado sistema de guards de transicion avanzados
 - R21: Agregado sistema de plantillas de workflows
 - R22: Agregado import/export de workflows en YAML/JSON
-- R23: Agregado metadata extendida en transiciones con validación
-- Actualizado schema de base de datos con nuevas tablas y campos
-- Actualizado API con 12+ nuevos endpoints
-- Actualizado domain layer con nuevos agregados y value objects
-- Actualizado casos de uso de aplicación
-- Agregado ejemplo completo de configuración YAML con nuevas características
+- R23: Agregado metadata extendida en transiciones con validacion
+
+---
+
+## Apendice: Estado de Implementacion
+
+| Componente | Estado | Archivos |
+|------------|--------|----------|
+| **Domain: Workflow** (States, Events, Version) | ✅ Completo | `internal/domain/workflow/` |
+| **Domain: Instance** (Transitions, Data, SubStates) | ✅ Completo | `internal/domain/instance/` |
+| **Domain: Guards/Actions Engine** | ✅ Completo | `internal/domain/instance/engine.go` |
+| **Domain: Events** (8 event types + Dispatcher interface) | ✅ Completo | `internal/domain/event/` |
+| **Domain: Timer** (con retry policy) | ✅ Completo | `internal/domain/timer/` |
+| **Domain: Shared** (ID, Timestamp, Pagination, Errors) | ✅ Completo | `internal/domain/shared/` |
+| **Domain: Actor/Roles** | ❌ Vacio | `internal/domain/actor/` |
+| **App: Create/Get/List Workflow** | ✅ Completo | `internal/application/workflow/` |
+| **App: Create/Get/List/Transition/Clone Instance** | ✅ Completo | `internal/application/instance/` |
+| **Infra: HTTP Handlers + JSON:API** | ✅ Completo | `internal/infrastructure/http/handler/` |
+| **Infra: JWT Auth Middleware** | ✅ Completo | `internal/infrastructure/http/middleware/` |
+| **Infra: Postgres Repos** (Instance + Workflow + Timer) | ✅ Completo | `internal/infrastructure/persistence/postgres/` |
+| **Infra: Memory Repos** (Instance + Workflow + Timer) | ✅ Completo | `internal/infrastructure/persistence/memory/` |
+| **Infra: Redis Cache** | ✅ Completo | `internal/infrastructure/cache/` |
+| **Infra: YAML Parser** | ✅ Completo | `internal/infrastructure/parser/yaml/` |
+| **Infra: MultiDispatcher** | ✅ Completo | `internal/infrastructure/messaging/multi_dispatcher.go` |
+| **Infra: WebhookDispatcher** | ✅ Completo | `internal/infrastructure/messaging/webhook_dispatcher.go` |
+| **Infra: LogDispatcher** | ✅ Completo | `internal/infrastructure/messaging/log_dispatcher.go` |
+| **Infra: Scheduler Worker** (con retry) | ✅ Completo | `internal/infrastructure/scheduler/worker.go` |
+| **Infra: RBAC** | ❌ No implementado | — |
+| **Infra: Prometheus/OpenTelemetry** | ❌ No implementado | — |
+| **Infra: RabbitMQ/Kafka Dispatcher** | ❌ No implementado | MultiDispatcher listo para agregar |
+| **Infra: Config Management** | ❌ Env vars directo | — |
+| **Testing** | ✅ 331 tests | handler, webhook, domain, parser |
+| **Bruno Collection** | ✅ 29 requests | `bruno/FlowEngine/` |
