@@ -30,7 +30,6 @@
 - ⬚ **RBAC** — JWT auth existe pero no se validan roles en endpoints/transiciones
 - ⬚ **Sistema de actores** — Dominio actor/ está vacío
 - ⬚ **Prometheus metrics** / OpenTelemetry tracing
-- ⬚ **RabbitMQ / Kafka** dispatchers (MultiDispatcher listo para agregarlos)
 - ⬚ **Config management** centralizado
 - ⬚ **Diagrama Mermaid** del workflow (R1.2.4)
 
@@ -1086,36 +1085,13 @@ func (h *InstanceHandler) TriggerEvent(c *gin.Context) {
 }
 ```
 
-#### 3.3.5 Event Dispatcher (RabbitMQ)
+#### 3.3.5 Event Dispatchers
 
-```go
-type RabbitMQEventDispatcher struct {
-    conn     *amqp.Connection
-    channel  *amqp.Channel
-    exchange string
-}
+El sistema de eventos utiliza un `MultiDispatcher` que permite registrar múltiples dispatchers simultáneamente:
 
-func (d *RabbitMQEventDispatcher) Dispatch(ctx context.Context, evt event.DomainEvent) error {
-    body, err := json.Marshal(evt)
-    if err != nil {
-        return err
-    }
-
-    return d.channel.PublishWithContext(ctx,
-        d.exchange,        // exchange
-        evt.Type(),        // routing key
-        false,             // mandatory
-        false,             // immediate
-        amqp.Publishing{
-            ContentType:  "application/json",
-            Body:         body,
-            DeliveryMode: amqp.Persistent,
-            Timestamp:    time.Now(),
-            Type:         evt.Type(),
-        },
-    )
-}
-```
+- **MultiDispatcher**: Orquesta el envío de eventos a todos los dispatchers registrados.
+- **WebhookDispatcher**: Envía eventos a URLs externas vía HTTP POST con firma HMAC.
+- **LogDispatcher**: Registra eventos en el log estructurado para auditoría y debugging.
 
 #### 3.3.6 Workflow Loader (YAML)
 
@@ -3071,10 +3047,6 @@ REDIS_DB=0
 REDIS_CACHE_TTL=5m
 REDIS_MAX_RETRIES=3
 
-# RabbitMQ
-RABBITMQ_URL=amqp://guest:guest@localhost:5672/
-RABBITMQ_EXCHANGE=flowengine.events
-RABBITMQ_QUEUE_PREFIX=flowengine
 
 # Security
 JWT_SECRET=your-secret-key
@@ -3112,7 +3084,6 @@ type Config struct {
     App         AppConfig
     Postgres    PostgresConfig
     Redis       RedisConfig
-    RabbitMQ    RabbitMQConfig
     Security    SecurityConfig
     Performance PerformanceConfig
     Observability ObservabilityConfig
@@ -3142,12 +3113,6 @@ type RedisConfig struct {
     DB         int
     CacheTTL   time.Duration
     MaxRetries int
-}
-
-type RabbitMQConfig struct {
-    URL          string
-    Exchange     string
-    QueuePrefix  string
 }
 
 type SecurityConfig struct {
@@ -3246,11 +3211,9 @@ services:
       - APP_ENV=production
       - POSTGRES_HOST=postgres
       - REDIS_ADDR=redis:6379
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
     depends_on:
       - postgres
       - redis
-      - rabbitmq
     restart: unless-stopped
     networks:
       - flowengine-network
@@ -3274,19 +3237,6 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
-    networks:
-      - flowengine-network
-
-  rabbitmq:
-    image: rabbitmq:3-management-alpine
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-    volumes:
-      - rabbitmq-data:/var/lib/rabbitmq
     networks:
       - flowengine-network
 
@@ -3314,7 +3264,6 @@ services:
 volumes:
   postgres-data:
   redis-data:
-  rabbitmq-data:
   prometheus-data:
   grafana-data:
 
@@ -3712,7 +3661,7 @@ rate(flowengine_cache_requests_total[5m]) * 100
 - [Hexagonal Architecture](https://alistair.cockburn.us/hexagonal-architecture/)
 - [Domain-Driven Design](https://www.domainlanguage.com/ddd/)
 - [Clean Architecture](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html)
-- [looplab/fsm](https://github.com/looplab/fsm)
+- Custom FSM implementation
 - [Go Testing](https://go.dev/doc/tutorial/add-a-test)
 
 ### C. Decisiones de Arquitectura (ADR)
@@ -3781,7 +3730,7 @@ Ver `docs/architecture/adr/` para Architecture Decision Records detallados.
 | **Infra: Scheduler Worker** (con retry) | ✅ Completo | `internal/infrastructure/scheduler/worker.go` |
 | **Infra: RBAC** | ❌ No implementado | — |
 | **Infra: Prometheus/OpenTelemetry** | ❌ No implementado | — |
-| **Infra: RabbitMQ/Kafka Dispatcher** | ❌ No implementado | MultiDispatcher listo para agregar |
+| **Infra: RabbitMQ/Kafka Dispatcher** | ❌ No planificado | MultiDispatcher cubre los casos de uso |
 | **Infra: Config Management** | ❌ Env vars directo | — |
 | **Testing** | ✅ 331 tests | handler, webhook, domain, parser |
 | **Bruno Collection** | ✅ 29 requests | `bruno/FlowEngine/` |

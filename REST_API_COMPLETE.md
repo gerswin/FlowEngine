@@ -292,7 +292,6 @@ curl -X POST http://localhost:8080/api/v1/workflows \
 ### ⏳ Pendiente
 - [ ] PostgreSQL repositories
 - [ ] Redis cache layer
-- [ ] RabbitMQ integration
 - [ ] Actors & Roles system
 - [ ] Timers & Schedulers
 - [ ] Webhooks
@@ -314,7 +313,6 @@ curl -X POST http://localhost:8080/api/v1/workflows \
 6. YAML workflow parser
 
 ### Prioridad Baja
-7. RabbitMQ integration
 8. Timers y schedulers
 9. Webhooks
 10. Observability completa (Prometheus, tracing)

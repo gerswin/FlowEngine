@@ -2,7 +2,7 @@
 
 ## Contexto del Proyecto
 
-**Stack Tecnológico**: Go 1.21+, Gin, PostgreSQL 15+, Redis 7+, RabbitMQ, looplab/fsm, Docker, Kubernetes
+**Stack Tecnológico**: Go 1.24+, Gin, PostgreSQL 15+, Redis 7+, Event Dispatcher (WebhookDispatcher, LogDispatcher), custom FSM, Docker, Kubernetes
 
 **Componentes Principales**:
 - Domain Layer (Workflow, Instance aggregates)
@@ -29,7 +29,7 @@
 - [ ] 1.1 Configuración inicial del proyecto
   - Ejecutar `go mod init github.com/LaFabric-LinkTIC/FlowEngine`
   - Agregar dependencias principales a `go.mod`:
-    - `github.com/looplab/fsm`
+    - FlowEngine custom FSM (`internal/domain/workflow/fsm.go`)
     - `github.com/gin-gonic/gin`
     - `github.com/redis/go-redis/v9`
     - `github.com/lib/pq`
@@ -573,46 +573,25 @@
   - Coverage objetivo: >80%
   - _Requirements: Unit Testing con Mocks, Testify_
 
-### Fase 10: Infrastructure - Messaging (RabbitMQ)
+### Fase 10: Infrastructure - Event Dispatching (Implementado)
 
-- [ ] 10.1 RabbitMQ connection
-  - Implementar `internal/infrastructure/messaging/rabbitmq/connection.go`:
-    - Función `NewRabbitMQConnection(url string) (*amqp.Connection, *amqp.Channel, error)`
-    - Configurar exchange (type: topic, durable)
-    - Connection recovery automático
-  - _Requirements: RabbitMQ Setup_
+> **NOTA**: RabbitMQ no fue implementado. El sistema de eventos usa MultiDispatcher con WebhookDispatcher y LogDispatcher.
 
-- [ ] 10.2 Event dispatcher adapter (Publisher)
-  - Implementar `internal/infrastructure/messaging/rabbitmq/publisher.go`:
-    - Type `RabbitMQEventDispatcher struct` implementando `event.Dispatcher`
-    - Método `Dispatch(ctx, evt DomainEvent) error`:
-      - Serializar evento a JSON
-      - PublishWithContext con routing key = evt.Type()
-      - DeliveryMode: Persistent
-      - Content-Type: application/json
-    - Método `DispatchBatch(ctx, events) error` con confirmations
-  - _Requirements: Event Publishing, Reliable Delivery_
+- [x] 10.1 Event dispatcher infrastructure
+  - Implementado mediante `MultiDispatcher` que agrega múltiples dispatchers
+  - `WebhookDispatcher` para envío de eventos via HTTP webhooks
+  - `LogDispatcher` para registro de eventos en logs
 
-- [ ] 10.3 Event subscriber adapter
-  - Implementar `internal/infrastructure/messaging/rabbitmq/subscriber.go`:
-    - Type `RabbitMQEventSubscriber struct`
-    - Método `Subscribe(ctx, eventTypes []string, handler EventHandler) error`:
-      - Crear queue con auto-delete
-      - Bind queue a exchange con routing keys
-      - Consume con QoS (prefetch=10)
-      - Procesar mensajes con handler
-      - Manual ACK en success, NACK en error con requeue
-  - Type `EventHandler func(ctx, DomainEvent) error`
-  - _Requirements: Event Subscription, Error Handling_
+- [x] 10.2 Event dispatcher adapter
+  - `MultiDispatcher` implementando `event.Dispatcher`
+  - Método `Dispatch(ctx, evt DomainEvent) error` delega a todos los dispatchers registrados
 
-- [ ]* 10.4 Tests de integración RabbitMQ
-  - Crear `test/integration/rabbitmq_test.go`:
-    - Setup con testcontainers-go (RabbitMQ container)
-    - `TestEventDispatcher_Publish_Success`
-    - `TestEventSubscriber_Consume_Success`
-    - `TestEventSubscriber_ErrorHandling_Requeue`
-    - Verificar orden de eventos
-  - _Requirements: Integration Testing, Message Queue_
+- [ ] 10.3 Event subscriber adapter (no implementado - futuro)
+  - Pendiente si se requiere suscripción a eventos externos
+
+- [ ]* 10.4 Tests de integración Event Dispatcher
+  - Tests para WebhookDispatcher y LogDispatcher
+  - _Requirements: Integration Testing_
 
 ### Fase 11: Infrastructure - Webhooks
 
@@ -852,9 +831,9 @@
       - handlers (instance, workflow, query)
       - eventBus, locker, logger
     - Constructor `NewContainer(config *Config) (*Container, error)`:
-      - 1. initInfrastructure() → DB, Redis, RabbitMQ connections
+      - 1. initInfrastructure() → DB, Redis connections
       - 2. initRepositories() → PostgresRepo, RedisCache, HybridRepo
-      - 3. initEventBus() → RabbitMQ dispatcher
+      - 3. initEventBus() → MultiDispatcher (WebhookDispatcher, LogDispatcher)
       - 4. initUseCases() → inyectar dependencias
       - 5. initHandlers() → inyectar use cases
     - Método `Close() error` (cleanup de connections)
@@ -1491,7 +1470,7 @@
 
 - [ ] 25.2 Docker Compose
   - Crear `docker-compose.yml`:
-    - Services: flowengine, postgres, redis, rabbitmq
+    - Services: flowengine, postgres, redis
     - Networks
     - Volumes para persistencia
     - Environment variables
@@ -1558,7 +1537,7 @@
 - [ ]* 26.5 E2E test flujo completo
   - Crear `test/e2e/radicacion_test.go`:
     - `TestRadicacionWorkflow_CompleteFlow_E2E`:
-      - 1. Start containers (PostgreSQL, Redis, RabbitMQ)
+      - 1. Start containers (PostgreSQL, Redis)
       - 2. Start API server
       - 3. Cargar workflow radicación
       - 4. POST /instances (crear instancia)
@@ -1570,7 +1549,7 @@
          - aprobar_documento
       - 6. Verificar estado final = "enviar", status = "completed"
       - 7. GET /instances/:id/history (verificar 5 transiciones)
-      - 8. Verificar eventos publicados a RabbitMQ
+      - 8. Verificar eventos dispatched via WebhookDispatcher
       - 9. Verificar webhooks enviados
     - Casos alternos:
       - Test con rechazo (rechazar_revision)
@@ -1671,7 +1650,7 @@
   - Crear `.github/workflows/test.yml`:
     - Trigger: push, pull_request
     - Jobs:
-      - unit-tests (Go 1.21, 1.22)
+      - unit-tests (Go 1.24)
       - integration-tests (con services: postgres, redis)
       - lint (golangci-lint)
     - Upload coverage to codecov

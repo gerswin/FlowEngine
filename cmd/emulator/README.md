@@ -335,7 +335,7 @@ Después de probar workflows:
 2. **Fase 7**: Agregar caching con Redis
 3. **Fase 8**: Application layer (use cases)
 4. **Fase 9**: REST API
-5. **Fase 10**: Integración RabbitMQ
+5. **Fase 10**: Sistema de Eventos (MultiDispatcher + WebhookDispatcher)
 
 ---
 

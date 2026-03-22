@@ -32,7 +32,7 @@ Usuario o sistema externo que interactúa con las instancias de workflows ejecut
 Conjunto de permisos que determina qué transiciones puede ejecutar un actor en determinados estados del workflow.
 
 **Domain Event (Evento de Dominio)**
-Notificación generada cuando ocurre algo significativo en el sistema (ej: instancia creada, estado cambiado, instancia completada). Los eventos de dominio se publican a sistemas externos mediante message queues o webhooks.
+Notificación generada cuando ocurre algo significativo en el sistema (ej: instancia creada, estado cambiado, instancia completada). Los eventos de dominio se publican a sistemas externos mediante el Event Dispatcher (WebhookDispatcher, LogDispatcher).
 
 **Subprocess (Subproceso)**
 Instancia de workflow creada como hijo de otra instancia (padre). Los subprocesos heredan contexto del padre y pueden sincronizarse con él.
@@ -180,7 +180,7 @@ Como usuario autorizado, quiero crear una nueva instancia de un workflow, para i
 
 2. **WHEN** la instancia es creada exitosamente
    **THEN** el sistema SHALL generar un evento de dominio "InstanceCreated"
-   **AND** el sistema SHALL publicar el evento al message queue
+   **AND** el sistema SHALL publicar el evento via Event Dispatcher
    **AND** el sistema SHALL retornar HTTP 201 Created
    **AND** la respuesta SHALL incluir: instance_id, workflow_id, current_state, version, created_at
 
@@ -274,7 +274,7 @@ Usuario o sistema externo que interactúa con las instancias de workflows ejecut
 Conjunto de permisos que determina qué transiciones puede ejecutar un actor en determinados estados del workflow.
 
 **Domain Event (Evento de Dominio)**
-Notificación generada cuando ocurre algo significativo en el sistema (ej: instancia creada, estado cambiado, instancia completada). Los eventos de dominio se publican a sistemas externos mediante message queues o webhooks.
+Notificación generada cuando ocurre algo significativo en el sistema (ej: instancia creada, estado cambiado, instancia completada). Los eventos de dominio se publican a sistemas externos mediante el Event Dispatcher (WebhookDispatcher, LogDispatcher).
 
 **Subprocess (Subproceso)**
 Instancia de workflow creada como hijo de otra instancia (padre). Los subprocesos heredan contexto del padre y pueden sincronizarse con él.
@@ -422,7 +422,7 @@ Como usuario autorizado, quiero crear una nueva instancia de un workflow, para i
 
 2. **WHEN** la instancia es creada exitosamente
    **THEN** el sistema SHALL generar un evento de dominio "InstanceCreated"
-   **AND** el sistema SHALL publicar el evento al message queue
+   **AND** el sistema SHALL publicar el evento via Event Dispatcher
    **AND** el sistema SHALL retornar HTTP 201 Created
    **AND** la respuesta SHALL incluir: instance_id, workflow_id, current_state, version, created_at
 
@@ -517,7 +517,7 @@ Como actor autorizado, quiero ejecutar transiciones de estado en instancias de w
 3. **WHEN** la transición se ejecuta exitosamente
    **THEN** el sistema SHALL persistir los cambios usando optimistic locking
    **AND** el sistema SHALL generar evento de dominio "StateChanged"
-   **AND** el sistema SHALL publicar el evento al message queue
+   **AND** el sistema SHALL publicar el evento via Event Dispatcher
    **AND** el sistema SHALL liberar el distributed lock
    **AND** el sistema SHALL retornar HTTP 200 OK
    **AND** la respuesta SHALL incluir: previous_state, current_state, version
@@ -799,12 +799,11 @@ Como sistema integrador, quiero recibir eventos cuando ocurran cambios significa
    **AND** el evento SHALL incluir: type, aggregate_id, occurred_at, payload
 
 2. **WHEN** se genera un evento de dominio
-   **THEN** el sistema SHALL publicar el evento a RabbitMQ exchange
-   **AND** el routing key SHALL ser el event type (ej: "instance.created", "state.changed")
-   **AND** el mensaje SHALL ser persistent (delivery_mode = 2)
+   **THEN** el sistema SHALL publicar el evento via Event Dispatcher (MultiDispatcher)
+   **AND** el event type SHALL identificar el evento (ej: "instance.created", "state.changed")
    **AND** el content_type SHALL ser "application/json"
 
-3. **IF** la publicación a RabbitMQ falla
+3. **IF** la publicación via Event Dispatcher falla
    **THEN** el sistema SHALL reintentar hasta 3 veces con exponential backoff
    **AND** el sistema SHALL registrar el error en logs
    **AND** la transición principal SHALL completarse exitosamente (eventos son async)
@@ -1009,7 +1008,7 @@ Como plataforma de orquestación (Kubernetes), quiero verificar la salud del ser
 1. **WHEN** se solicita health check mediante GET /api/v1/health
    **THEN** el sistema SHALL verificar conectividad con PostgreSQL (ping)
    **AND** el sistema SHALL verificar conectividad con Redis (ping)
-   **AND** el sistema SHALL verificar conectividad con RabbitMQ (si está configurado)
+   **AND** el sistema SHALL verificar conectividad con Event Dispatcher (si está configurado)
 
 2. **WHEN** todas las dependencias están saludables
    **THEN** el sistema SHALL retornar HTTP 200 OK
@@ -1100,7 +1099,7 @@ Como ingeniero de plataforma, quiero que el servicio haga shutdown gracefully, p
 1. **WHEN** el proceso recibe señal SIGTERM o SIGINT
    **THEN** el sistema SHALL dejar de aceptar nuevos requests
    **AND** el sistema SHALL esperar a que requests en flight completen (timeout: 30 segundos)
-   **AND** el sistema SHALL cerrar conexiones de DB, Redis, RabbitMQ
+   **AND** el sistema SHALL cerrar conexiones de DB, Redis, Event Dispatcher
    **AND** el sistema SHALL terminar con exit code 0 si shutdown exitoso
 
 2. **IF** requests no completan en el timeout
@@ -3161,7 +3160,7 @@ Como actor autorizado, quiero ejecutar transiciones de estado en instancias de w
 3. **WHEN** la transición se ejecuta exitosamente
    **THEN** el sistema SHALL persistir los cambios usando optimistic locking
    **AND** el sistema SHALL generar evento de dominio "StateChanged"
-   **AND** el sistema SHALL publicar el evento al message queue
+   **AND** el sistema SHALL publicar el evento via Event Dispatcher
    **AND** el sistema SHALL liberar el distributed lock
    **AND** el sistema SHALL retornar HTTP 200 OK
    **AND** la respuesta SHALL incluir: previous_state, current_state, version
@@ -3443,12 +3442,11 @@ Como sistema integrador, quiero recibir eventos cuando ocurran cambios significa
    **AND** el evento SHALL incluir: type, aggregate_id, occurred_at, payload
 
 2. **WHEN** se genera un evento de dominio
-   **THEN** el sistema SHALL publicar el evento a RabbitMQ exchange
-   **AND** el routing key SHALL ser el event type (ej: "instance.created", "state.changed")
-   **AND** el mensaje SHALL ser persistent (delivery_mode = 2)
+   **THEN** el sistema SHALL publicar el evento via Event Dispatcher (MultiDispatcher)
+   **AND** el event type SHALL identificar el evento (ej: "instance.created", "state.changed")
    **AND** el content_type SHALL ser "application/json"
 
-3. **IF** la publicación a RabbitMQ falla
+3. **IF** la publicación via Event Dispatcher falla
    **THEN** el sistema SHALL reintentar hasta 3 veces con exponential backoff
    **AND** el sistema SHALL registrar el error en logs
    **AND** la transición principal SHALL completarse exitosamente (eventos son async)
@@ -3653,7 +3651,7 @@ Como plataforma de orquestación (Kubernetes), quiero verificar la salud del ser
 1. **WHEN** se solicita health check mediante GET /api/v1/health
    **THEN** el sistema SHALL verificar conectividad con PostgreSQL (ping)
    **AND** el sistema SHALL verificar conectividad con Redis (ping)
-   **AND** el sistema SHALL verificar conectividad con RabbitMQ (si está configurado)
+   **AND** el sistema SHALL verificar conectividad con Event Dispatcher (si está configurado)
 
 2. **WHEN** todas las dependencias están saludables
    **THEN** el sistema SHALL retornar HTTP 200 OK
@@ -3744,7 +3742,7 @@ Como ingeniero de plataforma, quiero que el servicio haga shutdown gracefully, p
 1. **WHEN** el proceso recibe señal SIGTERM o SIGINT
    **THEN** el sistema SHALL dejar de aceptar nuevos requests
    **AND** el sistema SHALL esperar a que requests en flight completen (timeout: 30 segundos)
-   **AND** el sistema SHALL cerrar conexiones de DB, Redis, RabbitMQ
+   **AND** el sistema SHALL cerrar conexiones de DB, Redis, Event Dispatcher
    **AND** el sistema SHALL terminar con exit code 0 si shutdown exitoso
 
 2. **IF** requests no completan en el timeout

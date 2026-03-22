@@ -186,7 +186,7 @@ Después de entender la demo:
 2. **Fase 7**: Implementar Redis caching
 3. **Fase 8**: Implementar Application layer (use cases)
 4. **Fase 9**: Implementar REST API con Gin
-5. **Fase 10**: Integrar RabbitMQ para eventos
+5. **Fase 10**: Sistema de Eventos (MultiDispatcher + WebhookDispatcher)
 
 ## 💡 Tips
 

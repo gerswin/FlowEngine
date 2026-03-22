@@ -442,7 +442,7 @@ type DocumentSent struct {
 
 Cada transición emite eventos que pueden ser consumidos por:
 - Webhooks externos
-- RabbitMQ subscribers
+- Event Dispatchers (Webhook, Log)
 - Sistemas de notificación
 - Analytics
 

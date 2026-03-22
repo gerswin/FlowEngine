@@ -51,8 +51,8 @@ Sent [FINAL] ←────────┘
 
 - PostgreSQL 15+
 - Redis 7+
-- RabbitMQ (opcional, para eventos distribuidos)
-- Go 1.21+
+- Event Dispatcher (WebhookDispatcher, LogDispatcher)
+- Go 1.24+
 
 ### 1. Ejecutar Migraciones
 
@@ -105,7 +105,6 @@ REDIS_PASSWORD=
 WEBHOOK_URL=https://api.example.com/webhooks
 WEBHOOK_SECRET=your-webhook-secret
 
-RABBITMQ_URL=amqp://guest:guest@localhost:5672/
 ```
 
 ### Configurar Roles
