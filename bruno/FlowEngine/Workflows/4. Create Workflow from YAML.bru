@@ -1,0 +1,40 @@
+meta {
+  name: 4. Create Workflow from YAML
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/workflows/from-yaml
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "workflow-yaml",
+      "attributes": {
+        "yaml": "version: '1.0'\nworkflow:\n  name: Workflow desde YAML\n  description: Creado via endpoint from-yaml\n  initial_state: draft\n  states:\n    - id: draft\n      name: Borrador\n    - id: review\n      name: En Revision\n    - id: done\n      name: Finalizado\n      final: true\n  events:\n    - name: submit\n      from: [draft]\n      to: review\n    - name: finish\n      from: [review]\n      to: done\n",
+        "created_by": "{{actorId}}"
+      }
+    }
+  }
+}
+
+tests {
+  test("should return 201", function() {
+    expect(res.status).to.equal(201);
+  });
+  test("should return workflow resource", function() {
+    expect(res.body.data.type).to.equal("workflow");
+    expect(res.body.data.id).to.be.a("string");
+  });
+  test("should indicate yaml source", function() {
+    expect(res.body.meta.source).to.equal("yaml");
+  });
+}

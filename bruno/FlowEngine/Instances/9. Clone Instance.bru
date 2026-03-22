@@ -1,0 +1,50 @@
+meta {
+  name: 9. Clone Instance
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances/{{instanceId}}/clone
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "clone-request",
+      "attributes": {
+        "assignees": [
+          {"user_id": "{{actorId}}", "office_id": "office-001"},
+          {"user_id": "{{reviewerId}}", "office_id": "office-002"}
+        ],
+        "consolidator_id": "{{actorId}}",
+        "reason": "Requiere revision por multiples areas",
+        "timeout_duration": "48h",
+        "metadata": {
+          "clone_reason": "multi_area_review",
+          "priority": "high"
+        }
+      }
+    }
+  }
+}
+
+tests {
+  test("should return 201", function() {
+    expect(res.status).to.equal(201);
+  });
+  test("should return clone-group resource", function() {
+    expect(res.body.data.type).to.equal("clone-group");
+    expect(res.body.data.id).to.be.a("string");
+  });
+  test("should have cloned instances", function() {
+    expect(res.body.data.attributes.cloned_instances).to.be.an("array");
+    expect(res.body.data.attributes.cloned_instances.length).to.equal(2);
+  });
+}

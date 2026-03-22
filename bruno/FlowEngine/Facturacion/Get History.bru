@@ -1,0 +1,24 @@
+meta {
+  name: Get History
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/api/v1/instances/{{facturaId}}/history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should return transitions", function() {
+    expect(res.body.data).to.be.an("array");
+  });
+}

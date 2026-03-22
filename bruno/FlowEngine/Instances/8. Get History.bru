@@ -1,0 +1,35 @@
+meta {
+  name: 8. Get History
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/api/v1/instances/{{instanceId}}/history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should return array of transitions", function() {
+    expect(res.body.data).to.be.an("array");
+  });
+  test("each transition should have required attributes", function() {
+    if (res.body.data.length > 0) {
+      const t = res.body.data[0];
+      expect(t.type).to.equal("transition");
+      expect(t.attributes.from).to.be.a("string");
+      expect(t.attributes.to).to.be.a("string");
+      expect(t.attributes.event).to.be.a("string");
+      expect(t.attributes.actor).to.be.a("string");
+      expect(t.attributes.timestamp).to.be.a("string");
+    }
+  });
+}
