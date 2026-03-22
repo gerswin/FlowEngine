@@ -50,6 +50,7 @@ func setupInstanceHandlerTest(t *testing.T) *testSetup {
 	router.POST("/instances", handler.CreateInstance)
 	router.GET("/instances", handler.ListInstances)
 	router.GET("/instances/:id", handler.GetInstance)
+	router.GET("/instances/:id/history", handler.GetInstanceHistory)
 	router.POST("/instances/:id/transitions", handler.TransitionInstance)
 	router.POST("/instances/:id/clone", handler.CloneInstance)
 
@@ -802,6 +803,68 @@ func TestCloneInstance_ParentNotFound(t *testing.T) {
 	setup.router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
+	resp := parseResponse(t, w.Body.Bytes())
+	assert.NotNil(t, resp.Errors)
+}
+
+// ============================================================================
+// GetInstanceHistory Tests
+// ============================================================================
+
+func TestGetInstanceHistory_Success(t *testing.T) {
+	setup := setupInstanceHandlerTest(t)
+
+	instanceID := shared.NewID()
+	workflowID := shared.NewID()
+	actorID := shared.NewID()
+
+	inst, err := domainInstance.NewInstance(workflowID, "Test Workflow", "draft", actorID)
+	require.NoError(t, err)
+
+	// Add a transition so there's history
+	metadata := domainInstance.NewTransitionMetadata("reason", "feedback", nil)
+	err = inst.Transition("review", "submit", actorID, metadata, nil)
+	require.NoError(t, err)
+
+	setup.instanceRepo.On("FindByID", mock.Anything, instanceID).Return(inst, nil)
+
+	req := httptest.NewRequest("GET", "/instances/"+instanceID.String()+"/history", nil)
+	w := httptest.NewRecorder()
+
+	setup.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	resp := parseResponse(t, w.Body.Bytes())
+	assert.NotNil(t, resp.Data)
+}
+
+func TestGetInstanceHistory_NotFound(t *testing.T) {
+	setup := setupInstanceHandlerTest(t)
+
+	instanceID := shared.NewID()
+
+	setup.instanceRepo.On("FindByID", mock.Anything, instanceID).
+		Return(nil, domainInstance.InstanceNotFoundError(instanceID.String()))
+
+	req := httptest.NewRequest("GET", "/instances/"+instanceID.String()+"/history", nil)
+	w := httptest.NewRecorder()
+
+	setup.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	resp := parseResponse(t, w.Body.Bytes())
+	assert.NotNil(t, resp.Errors)
+}
+
+func TestGetInstanceHistory_InvalidID(t *testing.T) {
+	setup := setupInstanceHandlerTest(t)
+
+	req := httptest.NewRequest("GET", "/instances/invalid-id/history", nil)
+	w := httptest.NewRecorder()
+
+	setup.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 	resp := parseResponse(t, w.Body.Bytes())
 	assert.NotNil(t, resp.Errors)
 }

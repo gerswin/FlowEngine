@@ -62,13 +62,13 @@ func setupWorkflowHandlerTest(t *testing.T) *workflowTestSetup {
 
 	createUseCase := appWorkflow.NewCreateWorkflowUseCase(workflowRepo, eventDispatcher)
 	getUseCase := appWorkflow.NewGetWorkflowUseCase(workflowRepo)
+	createFromYAML := appWorkflow.NewCreateWorkflowFromYAMLUseCase(workflowRepo, eventDispatcher)
 
-	// Note: CreateWorkflowFromYAMLUseCase is not being tested here to keep this focused
-	// It would require the YAML parser which is more complex
-	handler := NewWorkflowHandler(createUseCase, nil, getUseCase)
+	handler := NewWorkflowHandler(createUseCase, createFromYAML, getUseCase)
 
 	router := gin.New()
 	router.POST("/workflows", handler.CreateWorkflow)
+	router.POST("/workflows/yaml", handler.CreateWorkflowFromYAML)
 	router.GET("/workflows", handler.ListWorkflows)
 	router.GET("/workflows/:id", handler.GetWorkflow)
 
@@ -620,4 +620,174 @@ func TestListWorkflows_IncludesHATEOASLinks(t *testing.T) {
 	// Verify top-level links exist
 	assert.NotNil(t, resp.Links)
 	assert.NotEmpty(t, resp.Links.Self)
+}
+
+// ============================================================================
+// CreateWorkflowFromYAML Tests
+// ============================================================================
+
+func TestCreateWorkflowFromYAML_JSONBody_Success(t *testing.T) {
+	setup := setupWorkflowHandlerTest(t)
+
+	creatorID := shared.NewID()
+
+	setup.workflowRepo.On("Save", mock.Anything, mock.AnythingOfType("*workflow.Workflow")).Return(nil)
+	setup.eventDispatcher.On("DispatchBatch", mock.Anything, mock.Anything).Return(nil)
+
+	yamlContent := `version: "1.0"
+workflow:
+  name: YAMLWorkflow
+  initial_state: draft
+  states:
+    - id: draft
+      name: Draft
+    - id: approved
+      name: Approved
+      is_final: true
+  events:
+    - name: approve
+      from: [draft]
+      to: approved`
+
+	body := map[string]interface{}{
+		"data": map[string]interface{}{
+			"type": "workflow-yaml",
+			"attributes": map[string]interface{}{
+				"yaml":       yamlContent,
+				"created_by": creatorID.String(),
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/workflows/yaml", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	setup.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	resp := parseWorkflowResponse(t, w.Body.Bytes())
+	assert.NotNil(t, resp.Data)
+}
+
+func TestCreateWorkflowFromYAML_JSONBody_WrongType(t *testing.T) {
+	setup := setupWorkflowHandlerTest(t)
+
+	creatorID := shared.NewID()
+
+	body := map[string]interface{}{
+		"data": map[string]interface{}{
+			"type": "wrong-type",
+			"attributes": map[string]interface{}{
+				"yaml":       "name: test",
+				"created_by": creatorID.String(),
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/workflows/yaml", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	setup.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+func TestCreateWorkflowFromYAML_JSONBody_EmptyYAML(t *testing.T) {
+	setup := setupWorkflowHandlerTest(t)
+
+	creatorID := shared.NewID()
+
+	body := map[string]interface{}{
+		"data": map[string]interface{}{
+			"type": "workflow-yaml",
+			"attributes": map[string]interface{}{
+				"yaml":       "",
+				"created_by": creatorID.String(),
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/workflows/yaml", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	setup.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCreateWorkflowFromYAML_JSONBody_MissingCreatedBy(t *testing.T) {
+	setup := setupWorkflowHandlerTest(t)
+
+	body := map[string]interface{}{
+		"data": map[string]interface{}{
+			"type": "workflow-yaml",
+			"attributes": map[string]interface{}{
+				"yaml":       "name: test\ninitial_state: draft\nstates:\n  - id: draft\n    name: Draft",
+				"created_by": "",
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/workflows/yaml", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	setup.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCreateWorkflowFromYAML_JSONBody_InvalidJSON(t *testing.T) {
+	setup := setupWorkflowHandlerTest(t)
+
+	req := httptest.NewRequest("POST", "/workflows/yaml", bytes.NewBuffer([]byte("invalid json")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	setup.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCreateWorkflowFromYAML_JSONBody_InvalidYAMLSyntax(t *testing.T) {
+	setup := setupWorkflowHandlerTest(t)
+
+	creatorID := shared.NewID()
+
+	body := map[string]interface{}{
+		"data": map[string]interface{}{
+			"type": "workflow-yaml",
+			"attributes": map[string]interface{}{
+				"yaml":       "invalid: [yaml: syntax: {{",
+				"created_by": creatorID.String(),
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/workflows/yaml", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	setup.router.ServeHTTP(w, req)
+
+	// Should return 400 for bad YAML or 422 for validation
+	assert.GreaterOrEqual(t, w.Code, 400)
 }
