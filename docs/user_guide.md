@@ -17,9 +17,9 @@
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.24+
 - Docker & Docker Compose (optional, for full stack)
-- PostgreSQL 16+ (production)
+- PostgreSQL 15+ (production)
 - Redis 7+ (optional, for caching)
 
 ### Quick Start
@@ -42,7 +42,7 @@ The API will be available at `http://localhost:8080`
 
 ```bash
 curl http://localhost:8080/health
-# Response: {"status":"ok","timestamp":"2024-..."}
+# Response: {"status":"healthy","service":"FlowEngine","version":"0.1.0"}
 ```
 
 ---
@@ -90,7 +90,7 @@ A **Transition** is a state change triggered by an event. It includes:
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/workflows \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/vnd.api+json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -d '{
     "data": {
@@ -138,7 +138,7 @@ curl -X POST http://localhost:8080/api/v1/workflows/from-yaml \
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/instances \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/vnd.api+json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -d '{
     "data": {
@@ -163,7 +163,7 @@ curl -X POST http://localhost:8080/api/v1/instances \
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/instances/INSTANCE_UUID/transitions \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/vnd.api+json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -d '{
     "data": {
@@ -210,7 +210,7 @@ For parallel reviews or multi-department approvals:
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/instances/INSTANCE_UUID/clone \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/vnd.api+json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -d '{
     "data": {
@@ -309,23 +309,52 @@ events:
           approved_at: "{{now}}"
 ```
 
-#### Guards (Conditions)
+#### Guards (Pre-transition conditions)
+
+Guards are evaluated before the transition. If any guard fails, the transition is rejected with a 400 error.
 
 ```yaml
 events:
   - name: approve
     sources: [review]
     destination: approved
+    required_data: [approved_by]
     guards:
       - type: has_role
         params:
           role: approver
       - type: field_equals
         params:
-          field: amount
-          operator: lt
-          value: 10000
+          field: currency
+          value: COP
+      - type: field_not_empty
+        params:
+          field: client_name
 ```
+
+Available guards: `field_exists`, `field_not_empty`, `field_equals`, `field_matches`, `has_role`, `has_any_role`, `validate_required_fields`, `is_assigned_to_actor`, `is_not_assigned`, `substate_equals`, `instance_age_less_than`, `instance_age_more_than`, `custom`.
+
+#### Actions (Post-transition effects)
+
+Actions execute after a successful transition.
+
+```yaml
+events:
+  - name: approve
+    sources: [review]
+    destination: approved
+    actions:
+      - type: mark_as_approved
+      - type: set_metadata
+        params:
+          key: approved_at
+          value: "$now"
+      - type: increment_field
+        params:
+          field: approval_count
+```
+
+Available actions: `set_metadata`, `increment_field`, `assign_to_user`, `mark_as_approved`, `mark_as_completed`, `increment_rejection_count`, `add_feedback_to_instance`, `update_document_type`, `log_reclassification`, `emit_event`.
 
 ### MinTrabajo Workflow Example
 
@@ -389,13 +418,13 @@ events:
 All endpoints (except `/health`) require JWT authentication:
 
 ```bash
-# Get development token
-curl -X POST http://localhost:8080/api/v1/auth/token \
-  -H "Content-Type: application/json" \
-  -d '{"user_id": "YOUR_UUID", "roles": ["admin"]}'
+# Get development token (no body needed)
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/token | jq -r '.token')
 
-# Use token in requests
-curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8080/api/v1/workflows
+# Use token in all requests
+curl -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/vnd.api+json" \
+     http://localhost:8080/api/v1/workflows
 ```
 
 ### Response Format (JSON:API)
@@ -451,6 +480,7 @@ All responses follow JSON:API specification:
 | POST | `/api/v1/instances` | Create instance |
 | GET | `/api/v1/instances` | List instances |
 | GET | `/api/v1/instances/:id` | Get instance |
+| GET | `/api/v1/instances/:id/history` | Transition history |
 | POST | `/api/v1/instances/:id/transitions` | Transition |
 | POST | `/api/v1/instances/:id/clone` | Clone instance |
 

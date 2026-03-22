@@ -104,31 +104,39 @@ El servidor estará disponible en `http://localhost:8080`
 ### 2. Endpoints Disponibles
 
 ```
-GET  /health
-POST /api/v1/workflows
-GET  /api/v1/workflows
-GET  /api/v1/workflows/:id
-POST /api/v1/instances
-GET  /api/v1/instances
-GET  /api/v1/instances/:id
-POST /api/v1/instances/:id/transitions
+GET  /health                              # Health check (publico)
+POST /api/v1/auth/token                   # Obtener JWT token (desarrollo)
+POST /api/v1/workflows                    # Crear workflow
+POST /api/v1/workflows/from-yaml          # Crear workflow desde YAML
+GET  /api/v1/workflows                    # Listar workflows (paginado)
+GET  /api/v1/workflows/:id               # Obtener workflow
+POST /api/v1/instances                    # Crear instancia
+GET  /api/v1/instances                    # Listar instancias (paginado)
+GET  /api/v1/instances/:id               # Obtener instancia
+GET  /api/v1/instances/:id/history        # Historial de transiciones
+POST /api/v1/instances/:id/transitions    # Ejecutar transicion
+POST /api/v1/instances/:id/clone          # Clonar instancia
 ```
+
+> Todos los endpoints `/api/v1/*` requieren `Authorization: Bearer <token>`.
+> Formato: JSON:API 1.0 (`Content-Type: application/vnd.api+json`).
 
 ### 3. Ejemplo Rápido
 
 ```bash
-# 1. Health check
+# 1. Obtener token
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/token | jq -r '.token')
+
+# 2. Health check
 curl http://localhost:8080/health
 
-# 2. Crear workflow
+# 3. Crear workflow
 curl -X POST http://localhost:8080/api/v1/workflows \
-  -H "Content-Type: application/json" \
-  -d @examples/create_workflow.json
+  -H "Content-Type: application/vnd.api+json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"data":{"type":"workflow","attributes":{...}}}'
 
-# 3. Listar workflows
-curl http://localhost:8080/api/v1/workflows
-
-# 4. Ver documentación completa
+# 4. Ver documentacion completa
 cat docs/api_quickstart.md
 ```
 

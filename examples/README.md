@@ -2,106 +2,141 @@
 
 Esta carpeta contiene ejemplos de peticiones JSON para usar con la API de FlowEngine.
 
+> **Nota**: Todos los endpoints requieren JWT auth. Los ejemplos asumen que ya tienes un token.
+
+## Obtener Token
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/token | jq -r '.token')
+```
+
 ## Archivos Disponibles
 
 ### `create_workflow.json`
-Ejemplo de creación de un workflow simple con estados y transiciones.
+Ejemplo de creacion de un workflow simple con estados y transiciones.
 
 **Uso:**
 ```bash
 curl -X POST http://localhost:8080/api/v1/workflows \
-  -H "Content-Type: application/json" \
-  -d @examples/create_workflow.json
+  -H "Content-Type: application/vnd.api+json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "data": {
+      "type": "workflow",
+      "attributes": '"$(cat examples/create_workflow.json)"'
+    }
+  }'
 ```
 
 ### `create_instance.json`
-Ejemplo de creación de una instancia de workflow.
+Ejemplo de creacion de una instancia de workflow.
 
 **Nota:** Reemplaza `REPLACE_WITH_ACTUAL_WORKFLOW_ID` con un ID real de workflow.
 
-**Uso:**
-```bash
-# Obtener un workflow ID primero
-WORKFLOW_ID=$(curl http://localhost:8080/api/v1/workflows | jq -r '.workflows[0].id')
-
-# Crear instancia (reemplazando el ID en el archivo)
-sed "s/REPLACE_WITH_ACTUAL_WORKFLOW_ID/$WORKFLOW_ID/" examples/create_instance.json | \
-curl -X POST http://localhost:8080/api/v1/instances \
-  -H "Content-Type: application/json" \
-  -d @-
-```
-
 ### `transition_instance.json`
-Ejemplo de ejecución de una transición (aprobar documento).
-
-**Uso:**
-```bash
-curl -X POST http://localhost:8080/api/v1/instances/INSTANCE_ID/transitions \
-  -H "Content-Type: application/json" \
-  -d @examples/transition_instance.json
-```
+Ejemplo de ejecucion de una transicion (aprobar documento).
 
 ## Script de Prueba Completo
 
 ```bash
 #!/bin/bash
+# Requiere: curl, jq
 
-# 1. Crear workflow
-echo "📋 Creando workflow..."
-WORKFLOW_RESPONSE=$(curl -s -X POST http://localhost:8080/api/v1/workflows \
-  -H "Content-Type: application/json" \
-  -d @examples/create_workflow.json)
+BASE=http://localhost:8080
 
-WORKFLOW_ID=$(echo $WORKFLOW_RESPONSE | jq -r '.id')
-echo "✅ Workflow creado: $WORKFLOW_ID"
+# 1. Obtener token
+TOKEN=$(curl -s -X POST $BASE/api/v1/auth/token | jq -r '.token')
+AUTH="Authorization: Bearer $TOKEN"
+CT="Content-Type: application/vnd.api+json"
+echo "Token obtenido"
 
-# 2. Crear instancia
+# 2. Crear workflow
 echo ""
-echo "🎬 Creando instancia..."
-INSTANCE_JSON=$(cat examples/create_instance.json | \
-  sed "s/REPLACE_WITH_ACTUAL_WORKFLOW_ID/$WORKFLOW_ID/")
-
-INSTANCE_RESPONSE=$(curl -s -X POST http://localhost:8080/api/v1/instances \
-  -H "Content-Type: application/json" \
-  -d "$INSTANCE_JSON")
-
-INSTANCE_ID=$(echo $INSTANCE_RESPONSE | jq -r '.id')
-echo "✅ Instancia creada: $INSTANCE_ID"
-echo "   Estado inicial: $(echo $INSTANCE_RESPONSE | jq -r '.current_state')"
-
-# 3. Ejecutar transición: submit
-echo ""
-echo "🔄 Ejecutando transición: submit..."
-curl -s -X POST http://localhost:8080/api/v1/instances/$INSTANCE_ID/transitions \
-  -H "Content-Type: application/json" \
+echo "Creando workflow..."
+WF=$(curl -s -X POST $BASE/api/v1/workflows \
+  -H "$CT" -H "$AUTH" \
   -d '{
-    "event": "submit",
-    "actor_id": "550e8400-e29b-41d4-a716-446655440000",
-    "reason": "Enviando para revisión"
-  }' | jq
+    "data": {
+      "type": "workflow",
+      "attributes": {
+        "name": "Proceso de Aprobacion",
+        "created_by": "550e8400-e29b-41d4-a716-446655440000",
+        "initial_state": {"id": "draft", "name": "Borrador", "is_final": false},
+        "states": [
+          {"id": "draft", "name": "Borrador", "is_final": false},
+          {"id": "review", "name": "En Revision", "is_final": false},
+          {"id": "approved", "name": "Aprobado", "is_final": true}
+        ],
+        "events": [
+          {"name": "submit", "sources": ["draft"], "destination": "review"},
+          {"name": "approve", "sources": ["review"], "destination": "approved"}
+        ]
+      }
+    }
+  }')
+WF_ID=$(echo $WF | jq -r '.data.id')
+echo "Workflow creado: $WF_ID"
 
-# 4. Ejecutar transición: approve
+# 3. Crear instancia
 echo ""
-echo "✅ Ejecutando transición: approve..."
-curl -s -X POST http://localhost:8080/api/v1/instances/$INSTANCE_ID/transitions \
-  -H "Content-Type: application/json" \
-  -d @examples/transition_instance.json | jq
+echo "Creando instancia..."
+INST=$(curl -s -X POST $BASE/api/v1/instances \
+  -H "$CT" -H "$AUTH" \
+  -d "{
+    \"data\": {
+      \"type\": \"instance\",
+      \"attributes\": {
+        \"workflow_id\": \"$WF_ID\",
+        \"started_by\": \"550e8400-e29b-41d4-a716-446655440000\",
+        \"data\": {\"title\": \"Propuesta Q1\"}
+      }
+    }
+  }")
+INST_ID=$(echo $INST | jq -r '.data.id')
+echo "Instancia creada: $INST_ID"
+echo "Estado: $(echo $INST | jq -r '.data.attributes.current_state')"
 
-# 5. Ver estado final
+# 4. Transicion: submit
 echo ""
-echo "📊 Estado final de la instancia:"
-curl -s http://localhost:8080/api/v1/instances/$INSTANCE_ID | jq '{
-  id: .id,
-  workflow: .workflow_name,
-  current_state: .current_state,
-  status: .status,
-  transitions: .transition_count
-}'
-```
+echo "Transicion: submit..."
+curl -s -X POST $BASE/api/v1/instances/$INST_ID/transitions \
+  -H "$CT" -H "$AUTH" \
+  -d '{
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "submit",
+        "actor_id": "550e8400-e29b-41d4-a716-446655440000",
+        "reason": "Listo para revision"
+      }
+    }
+  }' | jq '{state: .data.attributes.current_state}'
 
-Guarda este script como `test_flow.sh`, dale permisos de ejecución y ejecútalo:
+# 5. Transicion: approve
+echo ""
+echo "Transicion: approve..."
+curl -s -X POST $BASE/api/v1/instances/$INST_ID/transitions \
+  -H "$CT" -H "$AUTH" \
+  -d '{
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "approve",
+        "actor_id": "660f9511-f3ac-52e5-b827-557766551111",
+        "reason": "Aprobado"
+      }
+    }
+  }' | jq '{state: .data.attributes.current_state}'
 
-```bash
-chmod +x test_flow.sh
-./test_flow.sh
+# 6. Ver historial
+echo ""
+echo "Historial de transiciones:"
+curl -s $BASE/api/v1/instances/$INST_ID/history \
+  -H "$AUTH" | jq '[.data[] | {event: .attributes.event, from: .attributes.from, to: .attributes.to}]'
+
+# 7. Estado final
+echo ""
+echo "Estado final:"
+curl -s $BASE/api/v1/instances/$INST_ID \
+  -H "$AUTH" | jq '{state: .data.attributes.current_state, status: .data.attributes.status}'
 ```

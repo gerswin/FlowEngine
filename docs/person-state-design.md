@@ -830,12 +830,19 @@ GET /api/v1/instances/:id/rejections
 
 ## 9. Ejemplos de Uso
 
+> **Nota**: Todos los ejemplos requieren JWT auth. Obtener token con:
+> `TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/token | jq -r '.token')`
+>
+> Algunos endpoints mostrados aqui son conceptuales (e.g. `/events`, `/escalate`, `/reject`).
+> La API real usa `/transitions` con el evento correspondiente. Ver `docs/api_quickstart.md`.
+
 ### 9.1 Flujo Completo (Happy Path)
 
 ```bash
 # 1. Radicar documento
 curl -X POST http://localhost:8080/api/v1/instances \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/vnd.api+json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "workflow_id": "person_document_flow",
     "actor_id": "rad-001",
