@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/LaFabric-LinkTIC/FlowEngine/internal/domain/actor"
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/infrastructure/http/handler"
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/infrastructure/http/middleware"
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/infrastructure/security"
@@ -50,8 +51,22 @@ func (r *Router) Setup() *gin.Engine {
 
 	// Dev Auth Endpoint (Public) - FOR TESTING ONLY
 	router.POST("/api/v1/auth/token", func(c *gin.Context) {
-		// Create a dummy token for user "admin" with role "admin"
-		token, err := r.tokenService.GenerateToken("admin", []string{"admin"}, 24*time.Hour)
+		var req struct {
+			UserID string   `json:"user_id"`
+			Roles  []string `json:"roles"`
+		}
+		c.ShouldBindJSON(&req)
+
+		userID := req.UserID
+		if userID == "" {
+			userID = "admin"
+		}
+		roles := req.Roles
+		if len(roles) == 0 {
+			roles = []string{"admin"}
+		}
+
+		token, err := r.tokenService.GenerateToken(userID, roles, 24*time.Hour)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "failed to generate token"})
 			return
@@ -66,21 +81,21 @@ func (r *Router) Setup() *gin.Engine {
 		// Workflow routes
 		workflows := v1.Group("/workflows")
 		{
-			workflows.POST("", r.workflowHandler.CreateWorkflow)
-			workflows.POST("/from-yaml", r.workflowHandler.CreateWorkflowFromYAML)
-			workflows.GET("", r.workflowHandler.ListWorkflows)
-			workflows.GET("/:id", r.workflowHandler.GetWorkflow)
+			workflows.POST("", middleware.RequirePermission(actor.PermCreateWorkflow), r.workflowHandler.CreateWorkflow)
+			workflows.POST("/from-yaml", middleware.RequirePermission(actor.PermCreateWorkflow), r.workflowHandler.CreateWorkflowFromYAML)
+			workflows.GET("", middleware.RequirePermission(actor.PermReadWorkflow), r.workflowHandler.ListWorkflows)
+			workflows.GET("/:id", middleware.RequirePermission(actor.PermReadWorkflow), r.workflowHandler.GetWorkflow)
 		}
 
 		// Instance routes
 		instances := v1.Group("/instances")
 		{
-			instances.POST("", r.instanceHandler.CreateInstance)
-			instances.GET("", r.instanceHandler.ListInstances)
-			instances.GET("/:id", r.instanceHandler.GetInstance)
-			instances.GET("/:id/history", r.instanceHandler.GetInstanceHistory)
-			instances.POST("/:id/transitions", r.instanceHandler.TransitionInstance)
-			instances.POST("/:id/clone", r.instanceHandler.CloneInstance)
+			instances.POST("", middleware.RequirePermission(actor.PermCreateInstance), r.instanceHandler.CreateInstance)
+			instances.GET("", middleware.RequirePermission(actor.PermReadInstance), r.instanceHandler.ListInstances)
+			instances.GET("/:id", middleware.RequirePermission(actor.PermReadInstance), r.instanceHandler.GetInstance)
+			instances.GET("/:id/history", middleware.RequirePermission(actor.PermReadInstance), r.instanceHandler.GetInstanceHistory)
+			instances.POST("/:id/transitions", middleware.RequirePermission(actor.PermTransition), r.instanceHandler.TransitionInstance)
+			instances.POST("/:id/clone", middleware.RequirePermission(actor.PermCloneInstance), r.instanceHandler.CloneInstance)
 		}
 	}
 

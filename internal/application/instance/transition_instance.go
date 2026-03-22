@@ -14,6 +14,7 @@ type TransitionInstanceCommand struct {
 	InstanceID string
 	Event      string
 	ActorID    string
+	Roles      []string
 	Reason     string
 	Feedback   string
 	Metadata   map[string]interface{}
@@ -119,7 +120,7 @@ func (uc *TransitionInstanceUseCase) Execute(ctx context.Context, cmd Transition
 			Instance: inst,
 			Event:    cmd.Event,
 			ActorID:  actorID,
-			Roles:    []string{}, // Roles will come from JWT context later
+			Roles:    cmd.Roles,
 		}
 		if err := uc.engine.EvaluateGuards(guardCtx, evt.Guards); err != nil {
 			return nil, err

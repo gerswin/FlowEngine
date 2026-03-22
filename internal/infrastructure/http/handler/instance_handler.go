@@ -317,6 +317,13 @@ func (h *InstanceHandler) TransitionInstance(c *gin.Context) {
 		Data:       req.Data.Attributes.Data,
 	}
 
+	// Extract roles from JWT context for guard evaluation
+	if roles, exists := c.Get("roles"); exists {
+		if r, ok := roles.([]string); ok {
+			cmd.Roles = r
+		}
+	}
+
 	result, err := h.transitionUseCase.Execute(c.Request.Context(), cmd)
 	if err != nil {
 		handleDomainError(c, err)
