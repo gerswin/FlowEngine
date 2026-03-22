@@ -403,13 +403,36 @@ func (p *Parser) toDomainWorkflow(wf *WorkflowFile) (*workflow.Workflow, error) 
 			return nil, fmt.Errorf("failed to create event %s: %w", eventSchema.Name, err)
 		}
 
-		// Add validators from guards
+		// Add validators from guards (backward compatibility)
 		var validators []string
 		for _, guard := range eventSchema.Guards {
 			validators = append(validators, guard.Type)
 		}
 		if len(validators) > 0 {
 			event = event.WithValidators(validators)
+		}
+
+		// Map guards to domain GuardConfig
+		var guards []workflow.GuardConfig
+		for _, g := range eventSchema.Guards {
+			guards = append(guards, workflow.GuardConfig{Type: g.Type, Params: g.Params})
+		}
+		if len(guards) > 0 {
+			event = event.WithGuards(guards)
+		}
+
+		// Map actions to domain ActionConfig
+		var actions []workflow.ActionConfig
+		for _, a := range eventSchema.Actions {
+			actions = append(actions, workflow.ActionConfig{Type: a.Type, Params: a.Params})
+		}
+		if len(actions) > 0 {
+			event = event.WithActions(actions)
+		}
+
+		// Add required data fields
+		if len(eventSchema.RequiredData) > 0 {
+			event = event.WithRequiredData(eventSchema.RequiredData)
 		}
 
 		// Add event to workflow
@@ -426,10 +449,11 @@ func (p *Parser) toDomainWorkflow(wf *WorkflowFile) (*workflow.Workflow, error) 
 	return wfl, nil
 }
 
+var stateIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
 // isValidStateID checks if a state ID matches the required pattern.
 func isValidStateID(id string) bool {
-	pattern := regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
-	return pattern.MatchString(id)
+	return stateIDPattern.MatchString(id)
 }
 
 // parseDuration parses a duration string (e.g., "24h", "30m", "2d").

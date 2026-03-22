@@ -1,0 +1,50 @@
+meta {
+  name: Alt - Late Pay (Pago Tardio)
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances/{{facturaId}}/transitions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "late_pay",
+        "actor_id": "{{actorId}}",
+        "reason": "Pago tardio recibido",
+        "metadata": {
+          "payment_method": "transferencia",
+          "days_late": 12,
+          "late_fee_applied": false
+        },
+        "data": {
+          "payment_date": "2026-04-30",
+          "payment_method": "transferencia",
+          "payment_reference": "REF-2026-99001",
+          "amount_paid": 5950000,
+          "days_late": 12
+        }
+      }
+    }
+  }
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should transition to pagada", function() {
+    expect(res.body.data.attributes.current_state).to.equal("pagada");
+    expect(res.body.data.attributes.previous_state).to.equal("vencida");
+  });
+}

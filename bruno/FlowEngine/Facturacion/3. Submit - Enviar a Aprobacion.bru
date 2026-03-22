@@ -1,0 +1,41 @@
+meta {
+  name: 3. Submit - Enviar a Aprobacion
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances/{{facturaId}}/transitions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "submit",
+        "actor_id": "{{actorId}}",
+        "reason": "Factura lista para revision",
+        "metadata": {
+          "submitted_from": "portal_facturacion"
+        }
+      }
+    }
+  }
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should transition to pendiente_aprobacion", function() {
+    expect(res.body.data.attributes.current_state).to.equal("pendiente_aprobacion");
+    expect(res.body.data.attributes.previous_state).to.equal("borrador");
+  });
+}

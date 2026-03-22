@@ -422,7 +422,7 @@ func (we *WorkflowEmulator) executeTransition(id, eventName string) {
 	}
 
 	// Find event
-	evt, err := wf.FindEvent(eventName)
+	evt, err := wf.GetEvent(eventName)
 	if err != nil {
 		fmt.Printf("❌ Event '%s' not found in workflow\n", eventName)
 		return
@@ -430,7 +430,7 @@ func (we *WorkflowEmulator) executeTransition(id, eventName string) {
 
 	// Execute transition
 	metadata := instance.NewTransitionMetadataWithReason(fmt.Sprintf("Manual transition: %s", eventName))
-	err = inst.Transition(evt.Destination.ID, eventName, we.systemActor, metadata)
+	err = inst.Transition(evt.Destination.ID, eventName, we.systemActor, metadata, evt.RequiredData)
 	if err != nil {
 		fmt.Printf("❌ Transition failed: %v\n", err)
 		return

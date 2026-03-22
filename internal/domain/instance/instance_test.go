@@ -97,7 +97,7 @@ func TestInstance_Transition_Success(t *testing.T) {
 	actor := shared.NewID()
 	metadata := NewTransitionMetadataWithReason("Approved by manager")
 
-	err := instance.Transition("approved", "approve", actor, metadata)
+	err := instance.Transition("approved", "approve", actor, metadata, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "approved", instance.CurrentState())
@@ -121,7 +121,7 @@ func TestInstance_TransitionWithSubState_Success(t *testing.T) {
 	toSubState, _ := NewSubState("pending_director", "Pending Director")
 	metadata := EmptyTransitionMetadata()
 
-	err := instance.TransitionWithSubState("pending", toSubState, "escalate", actor, metadata)
+	err := instance.TransitionWithSubState("pending", toSubState, "escalate", actor, metadata, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "pending", instance.CurrentState())
@@ -141,7 +141,7 @@ func TestInstance_Transition_InvalidWhenNotActive(t *testing.T) {
 	instance.Complete(actor)
 
 	// Try to transition
-	err := instance.Transition("rejected", "reject", actor, EmptyTransitionMetadata())
+	err := instance.Transition("rejected", "reject", actor, EmptyTransitionMetadata(), nil)
 
 	assert.Error(t, err)
 	assert.True(t, InstanceNotActiveError(instance.ID(), instance.Status()).Is(err))

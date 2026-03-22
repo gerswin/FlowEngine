@@ -2,6 +2,7 @@ package instance
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/domain/shared"
 )
@@ -84,4 +85,12 @@ func TransitionMetadataValidationError(reason string) *shared.DomainError {
 	return shared.InvalidInputError(
 		fmt.Sprintf("transition metadata validation failed: %s", reason),
 	)
+}
+
+// MissingRequiredDataError creates an error for missing required data fields.
+func MissingRequiredDataError(eventName string, missingFields []string) *shared.DomainError {
+	return shared.InvalidInputError(
+		fmt.Sprintf("missing required data for event '%s': %s", eventName, strings.Join(missingFields, ", ")),
+	).WithContext("event", eventName).
+		WithContext("missing_fields", missingFields)
 }

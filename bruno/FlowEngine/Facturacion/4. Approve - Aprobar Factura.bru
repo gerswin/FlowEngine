@@ -1,0 +1,47 @@
+meta {
+  name: 4. Approve - Aprobar Factura
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances/{{facturaId}}/transitions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "approve",
+        "actor_id": "{{reviewerId}}",
+        "reason": "Factura verificada y aprobada",
+        "feedback": "Montos correctos, cliente verificado",
+        "metadata": {
+          "approved_by": "Maria Garcia",
+          "approval_level": "supervisor"
+        },
+        "data": {
+          "approved_by": "Maria Garcia",
+          "approval_date": "2026-03-20"
+        }
+      }
+    }
+  }
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should transition to aprobada", function() {
+    expect(res.body.data.attributes.current_state).to.equal("aprobada");
+    expect(res.body.data.attributes.previous_state).to.equal("pendiente_aprobacion");
+  });
+}

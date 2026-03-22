@@ -1,492 +1,319 @@
-# FlowEngine REST API - Quick Start Guide
+# FlowEngine REST API - Quick Start
 
-## Inicio Rápido
-
-### 1. Iniciar el servidor
+## 1. Iniciar el servidor
 
 ```bash
-# Ejecutar el servidor API
-make run
-
-# O directamente:
 go run cmd/api/main.go
+# o con Make:
+make run
 ```
 
-El servidor estará disponible en `http://localhost:8080`
+Servidor disponible en `http://localhost:8080` (in-memory, sin dependencias externas).
 
-### 2. Verificar estado del servidor
+## 2. Obtener token de autenticacion
+
+Todos los endpoints `/api/v1/*` requieren JWT. El endpoint de desarrollo genera un token de admin:
 
 ```bash
-curl http://localhost:8080/health
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/token | jq -r '.token')
 ```
 
-Respuesta:
+Usar en todas las requests:
+```bash
+-H "Authorization: Bearer $TOKEN"
+-H "Content-Type: application/vnd.api+json"
+```
+
+## 3. Crear un Workflow
+
+**POST /api/v1/workflows**
+
+```bash
+curl -X POST http://localhost:8080/api/v1/workflows \
+  -H "Content-Type: application/vnd.api+json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "data": {
+      "type": "workflow",
+      "attributes": {
+        "name": "Proceso de Aprobacion",
+        "description": "Workflow con 4 estados y validaciones",
+        "created_by": "550e8400-e29b-41d4-a716-446655440000",
+        "initial_state": {
+          "id": "draft",
+          "name": "Borrador",
+          "is_final": false
+        },
+        "states": [
+          {"id": "draft", "name": "Borrador", "is_final": false},
+          {"id": "review", "name": "En Revision", "is_final": false},
+          {"id": "approved", "name": "Aprobado", "is_final": true},
+          {"id": "rejected", "name": "Rechazado", "is_final": true}
+        ],
+        "events": [
+          {
+            "name": "submit",
+            "sources": ["draft"],
+            "destination": "review",
+            "required_data": ["title"],
+            "guards": [
+              {"type": "field_not_empty", "params": {"field": "title"}}
+            ],
+            "actions": [
+              {"type": "set_metadata", "params": {"key": "submitted_at", "value": "$now"}}
+            ]
+          },
+          {
+            "name": "approve",
+            "sources": ["review"],
+            "destination": "approved",
+            "required_data": ["approved_by"],
+            "actions": [
+              {"type": "mark_as_approved", "params": {}}
+            ]
+          },
+          {
+            "name": "reject",
+            "sources": ["review"],
+            "destination": "rejected",
+            "actions": [
+              {"type": "increment_rejection_count", "params": {}}
+            ]
+          }
+        ]
+      }
+    }
+  }'
+```
+
+**Response (201):**
 ```json
 {
-  "status": "healthy",
-  "service": "FlowEngine",
-  "version": "0.1.0"
+  "data": {
+    "type": "workflow",
+    "id": "49a5d892-aa26-45f1-bce4-c9151c03657d",
+    "attributes": {
+      "name": "Proceso de Aprobacion",
+      "version": "1.0.0",
+      "states": [...],
+      "events": [...]
+    }
+  },
+  "jsonapi": {"version": "1.0"},
+  "links": {"self": "/api/v1/workflows/49a5d892-..."}
 }
 ```
 
----
+## 4. Crear una Instancia
 
-## Endpoints Disponibles
+**POST /api/v1/instances**
 
-### Workflows
+```bash
+curl -X POST http://localhost:8080/api/v1/instances \
+  -H "Content-Type: application/vnd.api+json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "data": {
+      "type": "instance",
+      "attributes": {
+        "workflow_id": "<WORKFLOW_ID>",
+        "started_by": "550e8400-e29b-41d4-a716-446655440000",
+        "data": {
+          "title": "Propuesta Q1 2026",
+          "department": "IT",
+          "amount": 50000
+        },
+        "variables": {
+          "priority": "high",
+          "sla_hours": 48
+        }
+      }
+    }
+  }'
+```
 
-#### 1. Crear un Workflow
-
-**`POST /api/v1/workflows`**
-
-Crea una nueva definición de workflow.
-
-**Request Body:**
+**Response (201):**
 ```json
 {
-  "name": "Proceso de Aprobación",
-  "description": "Workflow simple de aprobación con 3 estados",
-  "created_by": "550e8400-e29b-41d4-a716-446655440000",
-  "initial_state": {
-    "id": "draft",
-    "name": "Borrador",
-    "description": "Documento en borrador",
-    "is_final": false
-  },
-  "states": [
-    {
-      "id": "draft",
-      "name": "Borrador",
-      "description": "Documento en borrador",
-      "is_final": false
-    },
-    {
-      "id": "review",
-      "name": "En Revisión",
-      "description": "Documento siendo revisado",
-      "is_final": false
-    },
-    {
-      "id": "approved",
-      "name": "Aprobado",
-      "description": "Documento aprobado",
-      "is_final": true
-    },
-    {
-      "id": "rejected",
-      "name": "Rechazado",
-      "description": "Documento rechazado",
-      "is_final": true
+  "data": {
+    "type": "instance",
+    "id": "1821a63d-471e-40dd-9582-bb474875fd04",
+    "attributes": {
+      "workflow_id": "49a5d892-...",
+      "current_state": "draft",
+      "status": "RUNNING",
+      "version": "v3"
     }
-  ],
-  "events": [
+  }
+}
+```
+
+## 5. Ejecutar Transicion
+
+**POST /api/v1/instances/:id/transitions**
+
+```bash
+curl -X POST http://localhost:8080/api/v1/instances/<INSTANCE_ID>/transitions \
+  -H "Content-Type: application/vnd.api+json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "submit",
+        "actor_id": "550e8400-e29b-41d4-a716-446655440000",
+        "reason": "Listo para revision",
+        "data": {
+          "submitted_from": "web_portal"
+        }
+      }
+    }
+  }'
+```
+
+**Response (200):**
+```json
+{
+  "data": {
+    "type": "instance",
+    "id": "1821a63d-...",
+    "attributes": {
+      "current_state": "review",
+      "previous_state": "draft",
+      "version": "v4"
+    }
+  }
+}
+```
+
+### Errores de validacion
+
+Si faltan campos obligatorios (`required_data`) o un guard falla:
+
+```json
+{
+  "errors": [{
+    "status": "400",
+    "code": "INVALID_INPUT",
+    "title": "missing required data for event 'submit': title",
+    "detail": "[INVALID_INPUT] missing required data for event 'submit': title"
+  }]
+}
+```
+
+## 6. Consultar Historial
+
+**GET /api/v1/instances/:id/history**
+
+```bash
+curl http://localhost:8080/api/v1/instances/<INSTANCE_ID>/history \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response (200):**
+```json
+{
+  "data": [
     {
-      "name": "submit",
-      "sources": ["draft"],
-      "destination": "review"
-    },
-    {
-      "name": "approve",
-      "sources": ["review"],
-      "destination": "approved"
-    },
-    {
-      "name": "reject",
-      "sources": ["review"],
-      "destination": "rejected"
+      "type": "transition",
+      "id": "c3d4e5f6-...",
+      "attributes": {
+        "from": "draft",
+        "to": "review",
+        "event": "submit",
+        "actor": "550e8400-...",
+        "timestamp": "2026-03-19T15:58:01Z",
+        "reason": "Listo para revision",
+        "feedback": "",
+        "metadata": {}
+      }
     }
   ]
 }
 ```
 
-**Response (201 Created):**
-```json
-{
-  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "name": "Proceso de Aprobación",
-  "version": "1.0.0"
-}
-```
+## 7. Listar con Paginacion
 
-**cURL Example:**
+**GET /api/v1/instances** y **GET /api/v1/workflows** soportan paginacion:
+
 ```bash
-curl -X POST http://localhost:8080/api/v1/workflows \
-  -H "Content-Type: application/json" \
-  -d @examples/create_workflow.json
-```
-
----
-
-#### 2. Listar Workflows
-
-**`GET /api/v1/workflows`**
-
-Obtiene todos los workflows disponibles.
-
-**Response (200 OK):**
-```json
-{
-  "workflows": [
-    {
-      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      "name": "Proceso de Aprobación",
-      "description": "Workflow simple de aprobación",
-      "version": "1.0.0",
-      "initial_state": "draft",
-      "states": [...],
-      "events": [...],
-      "created_at": "2025-01-19T10:30:00Z",
-      "updated_at": "2025-01-19T10:30:00Z"
-    }
-  ],
-  "count": 1
-}
-```
-
-**cURL Example:**
-```bash
-curl http://localhost:8080/api/v1/workflows
-```
-
----
-
-#### 3. Obtener Workflow por ID
-
-**`GET /api/v1/workflows/:id`**
-
-Obtiene los detalles completos de un workflow.
-
-**Response (200 OK):**
-```json
-{
-  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "name": "Proceso de Aprobación",
-  "description": "Workflow simple de aprobación",
-  "version": "1.0.0",
-  "initial_state": "draft",
-  "states": [
-    {
-      "id": "draft",
-      "name": "Borrador",
-      "description": "Documento en borrador",
-      "is_final": false
-    },
-    {
-      "id": "review",
-      "name": "En Revisión",
-      "description": "Documento siendo revisado",
-      "is_final": false
-    },
-    {
-      "id": "approved",
-      "name": "Aprobado",
-      "description": "Documento aprobado",
-      "is_final": true
-    }
-  ],
-  "events": [
-    {
-      "name": "submit",
-      "sources": ["draft"],
-      "destination": "review"
-    },
-    {
-      "name": "approve",
-      "sources": ["review"],
-      "destination": "approved"
-    }
-  ],
-  "created_at": "2025-01-19T10:30:00Z",
-  "updated_at": "2025-01-19T10:30:00Z"
-}
-```
-
-**cURL Example:**
-```bash
-curl http://localhost:8080/api/v1/workflows/a1b2c3d4-e5f6-7890-abcd-ef1234567890
-```
-
----
-
-### Instances (Instancias de Workflow)
-
-#### 4. Crear una Instancia
-
-**`POST /api/v1/instances`**
-
-Crea una nueva instancia de un workflow existente.
-
-**Request Body:**
-```json
-{
-  "workflow_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "started_by": "550e8400-e29b-41d4-a716-446655440000",
-  "data": {
-    "title": "Propuesta de Proyecto Q1 2025",
-    "requester": "Juan Pérez",
-    "department": "IT",
-    "amount": 50000
-  },
-  "variables": {
-    "priority": "high",
-    "sla_hours": 48
-  }
-}
-```
-
-**Response (201 Created):**
-```json
-{
-  "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-  "workflow_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "workflow_name": "Proceso de Aprobación",
-  "current_state": "draft",
-  "status": "running",
-  "version": "1",
-  "created_at": "2025-01-19T11:00:00Z"
-}
-```
-
-**cURL Example:**
-```bash
-curl -X POST http://localhost:8080/api/v1/instances \
-  -H "Content-Type: application/json" \
-  -d @examples/create_instance.json
-```
-
----
-
-#### 5. Listar Instancias
-
-**`GET /api/v1/instances`**
-
-Obtiene todas las instancias.
-
-**Query Parameters:**
-- `workflow_id` (opcional): Filtrar por workflow específico
-
-**Response (200 OK):**
-```json
-{
-  "instances": [
-    {
-      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-      "workflow_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      "workflow_name": "Proceso de Aprobación",
-      "current_state": "draft",
-      "status": "running",
-      "version": "1",
-      "data": {...},
-      "variables": {...},
-      "transitions": [],
-      "created_at": "2025-01-19T11:00:00Z",
-      "updated_at": "2025-01-19T11:00:00Z",
-      "completed_at": "",
-      "transition_count": 0
-    }
-  ],
-  "count": 1
-}
-```
-
-**cURL Examples:**
-```bash
-# Todas las instancias
-curl http://localhost:8080/api/v1/instances
+# Pagina 1, 10 items
+curl "http://localhost:8080/api/v1/instances?page[number]=1&page[size]=10" \
+  -H "Authorization: Bearer $TOKEN"
 
 # Filtrar por workflow
-curl http://localhost:8080/api/v1/instances?workflow_id=a1b2c3d4-e5f6-7890-abcd-ef1234567890
+curl "http://localhost:8080/api/v1/instances?filter[workflow_id]=<ID>" \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
----
-
-#### 6. Obtener Instancia por ID
-
-**`GET /api/v1/instances/:id`**
-
-Obtiene los detalles completos de una instancia, incluyendo historial de transiciones.
-
-**Response (200 OK):**
+**Response incluye meta de paginacion:**
 ```json
 {
-  "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-  "workflow_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "workflow_name": "Proceso de Aprobación",
-  "current_state": "review",
-  "status": "running",
-  "version": "2",
-  "data": {
-    "title": "Propuesta de Proyecto Q1 2025",
-    "requester": "Juan Pérez"
-  },
-  "variables": {
-    "priority": "high"
-  },
-  "transitions": [
-    {
-      "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
-      "from": "draft",
-      "to": "review",
-      "event": "submit",
-      "actor": "550e8400-e29b-41d4-a716-446655440000",
-      "timestamp": "2025-01-19T11:15:00Z",
-      "reason": "Enviando para aprobación",
-      "feedback": "",
-      "metadata": {}
+  "data": [...],
+  "meta": {
+    "total": 42,
+    "page": {
+      "number": 1,
+      "size": 10,
+      "total": 5
     }
+  }
+}
+```
+
+## 8. Manejo de Errores
+
+Todos los errores usan formato JSON:API:
+
+| HTTP | Code | Cuando |
+|------|------|--------|
+| 400 | INVALID_INPUT | Datos invalidos, guards fallidos, campos faltantes |
+| 401 | UNAUTHORIZED | Token faltante o invalido |
+| 403 | FORBIDDEN | Sin permisos (guard has_role) |
+| 404 | NOT_FOUND | Recurso no existe |
+| 409 | CONFLICT | Version mismatch |
+| 409 | INVALID_STATE | Transicion invalida para el estado actual |
+
+## Guards y Actions
+
+Los eventos pueden definir **guards** (condiciones pre-transicion) y **actions** (efectos post-transicion):
+
+```json
+{
+  "name": "approve",
+  "sources": ["review"],
+  "destination": "approved",
+  "required_data": ["approved_by"],
+  "guards": [
+    {"type": "field_exists", "params": {"field": "approved_by"}},
+    {"type": "field_equals", "params": {"field": "currency", "value": "COP"}}
   ],
-  "created_at": "2025-01-19T11:00:00Z",
-  "updated_at": "2025-01-19T11:15:00Z",
-  "completed_at": "",
-  "transition_count": 1
+  "actions": [
+    {"type": "mark_as_approved", "params": {}},
+    {"type": "set_metadata", "params": {"key": "status", "value": "approved"}}
+  ]
 }
 ```
 
-**cURL Example:**
-```bash
-curl http://localhost:8080/api/v1/instances/b2c3d4e5-f6a7-8901-bcde-f12345678901
-```
+**Orden de ejecucion:**
+1. Se aplican los datos de la transicion (`data` del request)
+2. Se evaluan los guards (si alguno falla -> 400)
+3. Se validan los `required_data`
+4. Se ejecuta la transicion (cambio de estado)
+5. Se ejecutan las actions
+6. Se persiste y se despachan eventos
 
----
+## Testing con Bruno
 
-#### 7. Ejecutar Transición
+La coleccion Bruno esta en `bruno/FlowEngine/`. Para usarla:
 
-**`POST /api/v1/instances/:id/transitions`**
+1. Abrir Bruno e importar la carpeta `bruno/FlowEngine/`
+2. Seleccionar el environment **Local** (top-right)
+3. Ejecutar **Auth > Get Token** primero
+4. Ejecutar los requests en orden
 
-Ejecuta una transición de estado en una instancia.
-
-**Request Body:**
-```json
-{
-  "event": "approve",
-  "actor_id": "660f9511-f3ac-52e5-b827-557766551111",
-  "reason": "Propuesta aprobada por el comité",
-  "feedback": "Excelente propuesta, adelante con el proyecto",
-  "metadata": {
-    "reviewer": "María García",
-    "review_score": 95,
-    "approved_amount": 50000
-  },
-  "data": {
-    "approval_date": "2025-01-19",
-    "approved_by": "María García"
-  }
-}
-```
-
-**Response (200 OK):**
-```json
-{
-  "instance_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-  "previous_state": "review",
-  "current_state": "approved",
-  "status": "running",
-  "version": "3",
-  "transition_id": "d4e5f6a7-b8c9-0123-def0-234567890123"
-}
-```
-
-**cURL Example:**
-```bash
-curl -X POST http://localhost:8080/api/v1/instances/b2c3d4e5-f6a7-8901-bcde-f12345678901/transitions \
-  -H "Content-Type: application/json" \
-  -d @examples/transition_instance.json
-```
-
----
-
-## Manejo de Errores
-
-Todos los errores siguen este formato:
-
-```json
-{
-  "error": "NOT_FOUND",
-  "message": "workflow not found: invalid-id",
-  "code": "NOT_FOUND",
-  "context": {
-    "workflow_id": "invalid-id"
-  }
-}
-```
-
-### Códigos de Error Comunes
-
-| HTTP Status | Error Code | Descripción |
-|-------------|------------|-------------|
-| 400 | INVALID_INPUT | Request inválido o datos malformados |
-| 404 | NOT_FOUND | Recurso no encontrado |
-| 409 | CONFLICT | Conflicto de estado o versión |
-| 409 | INVALID_STATE | Transición inválida |
-| 500 | INTERNAL_ERROR | Error interno del servidor |
-
----
-
-## Ejemplo Completo: Flujo de Trabajo
-
-```bash
-# 1. Crear workflow
-WORKFLOW_ID=$(curl -X POST http://localhost:8080/api/v1/workflows \
-  -H "Content-Type: application/json" \
-  -d @examples/create_workflow.json | jq -r '.id')
-
-echo "Workflow creado: $WORKFLOW_ID"
-
-# 2. Crear instancia
-INSTANCE_ID=$(curl -X POST http://localhost:8080/api/v1/instances \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"workflow_id\": \"$WORKFLOW_ID\",
-    \"started_by\": \"550e8400-e29b-41d4-a716-446655440000\",
-    \"data\": {\"title\": \"Test Document\"}
-  }" | jq -r '.id')
-
-echo "Instancia creada: $INSTANCE_ID"
-
-# 3. Ejecutar transición: submit
-curl -X POST http://localhost:8080/api/v1/instances/$INSTANCE_ID/transitions \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"event\": \"submit\",
-    \"actor_id\": \"550e8400-e29b-41d4-a716-446655440000\",
-    \"reason\": \"Enviando para revisión\"
-  }"
-
-# 4. Ejecutar transición: approve
-curl -X POST http://localhost:8080/api/v1/instances/$INSTANCE_ID/transitions \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"event\": \"approve\",
-    \"actor_id\": \"660f9511-f3ac-52e5-b827-557766551111\",
-    \"reason\": \"Aprobado\",
-    \"feedback\": \"Todo en orden\"
-  }"
-
-# 5. Ver estado final
-curl http://localhost:8080/api/v1/instances/$INSTANCE_ID | jq
-```
-
----
-
-## Próximos Pasos
-
-- Consulta `examples/` para ver archivos JSON de ejemplo
-- Revisa el código en `cmd/demo/` para ver ejemplos programáticos
-- Lee `requirements.md` para entender los requerimientos completos del sistema
-
----
-
-## Notas Importantes
-
-⚠️ **Estado Actual**: Esta implementación usa repositorios **in-memory**.
-- Los datos se pierden al reiniciar el servidor
-- No hay persistencia en base de datos
-- Ideal para desarrollo y pruebas
-- La migración a PostgreSQL/Redis está planificada
-
-✅ **Listo para usar**:
-- Domain layer completo con DDD
-- Application layer con use cases
-- REST API funcional
-- Manejo de errores robusto
-- Optimistic locking implementado
+Colecciones disponibles:
+- **Auth** — Obtener token
+- **Workflows** — CRUD de workflows
+- **Instances** — CRUD de instancias + transiciones
+- **Facturacion** — Flujo completo de facturacion con guards y actions

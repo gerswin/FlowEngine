@@ -1,0 +1,26 @@
+meta {
+  name: 2. Get Instance
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/instances/{{instanceId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should return instance with data", function() {
+    expect(res.body.data.type).to.equal("instance");
+    expect(res.body.data.attributes.data).to.be.an("object");
+    expect(res.body.data.attributes.variables).to.be.an("object");
+  });
+}

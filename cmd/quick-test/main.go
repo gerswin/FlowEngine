@@ -68,7 +68,7 @@ func main() {
 	// Transición 1: Submit
 	fmt.Println("\n→ Transition: submit")
 	metadata1 := instance.NewTransitionMetadataWithReason("Enviando para revisión")
-	err := inst.Transition(review.ID, "submit", actor, metadata1)
+	err := inst.Transition(review.ID, "submit", actor, metadata1, nil)
 	if err != nil {
 		fmt.Printf("   ❌ Error: %v\n", err)
 	} else {
@@ -86,7 +86,7 @@ func main() {
 			"score":    95,
 		},
 	)
-	err = inst.Transition(approved.ID, "approve", actor, metadata2)
+	err = inst.Transition(approved.ID, "approve", actor, metadata2, nil)
 	if err != nil {
 		fmt.Printf("   ❌ Error: %v\n", err)
 	} else {

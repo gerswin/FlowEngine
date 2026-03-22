@@ -1,0 +1,138 @@
+meta {
+  name: 1. Create Workflow Facturacion
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/workflows
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "workflow",
+      "attributes": {
+        "name": "Proceso de Facturacion",
+        "description": "Ciclo de vida completo de una factura: creacion, aprobacion, envio, pago o anulacion",
+        "created_by": "{{actorId}}",
+        "initial_state": {
+          "id": "borrador",
+          "name": "Borrador",
+          "description": "Factura en preparacion, editable",
+          "is_final": false
+        },
+        "states": [
+          {
+            "id": "borrador",
+            "name": "Borrador",
+            "description": "Factura en preparacion, editable",
+            "is_final": false
+          },
+          {
+            "id": "pendiente_aprobacion",
+            "name": "Pendiente Aprobacion",
+            "description": "Esperando revision del supervisor",
+            "is_final": false
+          },
+          {
+            "id": "aprobada",
+            "name": "Aprobada",
+            "description": "Revisada y lista para envio al cliente",
+            "is_final": false
+          },
+          {
+            "id": "enviada",
+            "name": "Enviada",
+            "description": "Factura enviada al cliente, esperando pago",
+            "is_final": false
+          },
+          {
+            "id": "vencida",
+            "name": "Vencida",
+            "description": "Plazo de pago expirado sin recibir pago",
+            "is_final": false
+          },
+          {
+            "id": "pagada",
+            "name": "Pagada",
+            "description": "Pago recibido y registrado",
+            "is_final": true
+          },
+          {
+            "id": "anulada",
+            "name": "Anulada",
+            "description": "Factura cancelada o invalidada",
+            "is_final": true
+          }
+        ],
+        "events": [
+          {
+            "name": "submit",
+            "sources": ["borrador"],
+            "destination": "pendiente_aprobacion"
+          },
+          {
+            "name": "approve",
+            "sources": ["pendiente_aprobacion"],
+            "destination": "aprobada"
+          },
+          {
+            "name": "reject",
+            "sources": ["pendiente_aprobacion"],
+            "destination": "borrador"
+          },
+          {
+            "name": "send",
+            "sources": ["aprobada"],
+            "destination": "enviada"
+          },
+          {
+            "name": "pay",
+            "sources": ["enviada"],
+            "destination": "pagada"
+          },
+          {
+            "name": "mark_overdue",
+            "sources": ["enviada"],
+            "destination": "vencida"
+          },
+          {
+            "name": "late_pay",
+            "sources": ["vencida"],
+            "destination": "pagada"
+          },
+          {
+            "name": "void",
+            "sources": ["borrador", "pendiente_aprobacion", "enviada", "vencida"],
+            "destination": "anulada"
+          }
+        ]
+      }
+    }
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setEnvVar("facturacionWorkflowId", res.body.data.id);
+  }
+}
+
+tests {
+  test("should return 201", function() {
+    expect(res.status).to.equal(201);
+  });
+  test("should have 7 states", function() {
+    expect(res.body.data.attributes.states).to.be.an("array");
+  });
+  test("should have 8 events", function() {
+    expect(res.body.data.attributes.events).to.be.an("array");
+  });
+}

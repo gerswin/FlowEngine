@@ -1,0 +1,28 @@
+meta {
+  name: 2. List Workflows
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/workflows?page[number]=1&page[size]=10
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should return array", function() {
+    expect(res.body.data).to.be.an("array");
+  });
+  test("should have pagination meta", function() {
+    expect(res.body.meta.total).to.be.a("number");
+    expect(res.body.meta.page).to.be.an("object");
+  });
+}

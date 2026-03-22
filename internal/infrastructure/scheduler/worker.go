@@ -83,19 +83,39 @@ func (w *Worker) processTimer(ctx context.Context, t *timer.Timer) {
 
 	_, err := w.transitionUseCase.Execute(ctx, cmd)
 	if err != nil {
-		logger.Error("Failed to execute timeout transition", "timer_id", t.ID(), "error", err)
-		// Retry logic could go here, or marking as failed.
-		// For now, we might leave it pending or delete/mark failed to avoid infinite loop.
-		// R5.2: "reintentar según retry policy".
-		// Simplification: If validation fails (e.g. instance moved state), delete timer.
-		// If transient error, leave it for next tick.
-		
-		// If Instance moved state, the transition will fail validation. We should delete the timer.
-		// But we don't know specific error type easily without checking.
-		// Assumption: if execute fails, we probably shouldn't retry forever.
+		logger.Error("Failed to execute timeout transition",
+			"timer_id", t.ID(),
+			"instance_id", t.InstanceID(),
+			"error", err,
+			"retry_count", t.RetryCount(),
+		)
+
+		if t.CanRetry() {
+			t.IncrementRetry(err)
+			if saveErr := w.timerRepo.Save(ctx, t); saveErr != nil {
+				logger.Error("Failed to save timer retry state", "timer_id", t.ID(), "error", saveErr)
+			} else {
+				logger.Info("Timer scheduled for retry",
+					"timer_id", t.ID(),
+					"retry_count", t.RetryCount(),
+					"next_retry_at", t.NextRetryAt(),
+				)
+			}
+		} else {
+			t.MarkFailed()
+			if saveErr := w.timerRepo.Save(ctx, t); saveErr != nil {
+				logger.Error("Failed to save timer failed state", "timer_id", t.ID(), "error", saveErr)
+			}
+			logger.Warn("Timer retries exhausted, marked as failed",
+				"timer_id", t.ID(),
+				"instance_id", t.InstanceID(),
+				"last_error", t.LastError(),
+				"retry_count", t.RetryCount(),
+			)
+		}
 	} else {
-		// Success: Mark fired
-		t.MarkFired()
+		// Success: Mark completed
+		t.MarkCompleted()
 		if err := w.timerRepo.Save(ctx, t); err != nil {
 			logger.Error("Failed to update timer status", "timer_id", t.ID(), "error", err)
 		}

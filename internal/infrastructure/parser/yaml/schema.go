@@ -54,6 +54,7 @@ type EventSchema struct {
 	FromSubstate   []string       `yaml:"from_substate,omitempty"`
 	ToSubstate     string         `yaml:"to_substate,omitempty"`
 	TargetSubstate string         `yaml:"target_substate,omitempty"`
+	RequiredData   []string       `yaml:"required_data,omitempty"`
 	Guards         []GuardSchema  `yaml:"guards,omitempty"`
 	Actions        []ActionSchema `yaml:"actions,omitempty"`
 }

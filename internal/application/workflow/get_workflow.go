@@ -62,6 +62,29 @@ func (uc *GetWorkflowUseCase) ExecuteAll(ctx context.Context) ([]*WorkflowDTO, e
 	return dtos, nil
 }
 
+// WorkflowListResult contains a paginated list of workflows with total count.
+type WorkflowListResult struct {
+	Items []*WorkflowDTO
+	Total int64
+}
+
+// ExecuteList retrieves a paginated list of workflows.
+func (uc *GetWorkflowUseCase) ExecuteList(ctx context.Context, pageNumber, pageSize int) (*WorkflowListResult, error) {
+	query := shared.NewListQuery(pageNumber, pageSize)
+
+	workflows, total, err := uc.workflowRepo.List(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	dtos := make([]*WorkflowDTO, len(workflows))
+	for i, wf := range workflows {
+		dtos[i] = uc.toDTO(wf)
+	}
+
+	return &WorkflowListResult{Items: dtos, Total: total}, nil
+}
+
 func (uc *GetWorkflowUseCase) toDTO(wf *workflow.Workflow) *WorkflowDTO {
 	states := wf.States()
 	stateDTOs := make([]StateDTO, len(states))

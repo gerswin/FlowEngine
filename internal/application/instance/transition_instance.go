@@ -37,6 +37,7 @@ type TransitionInstanceUseCase struct {
 	workflowRepo workflow.Repository
 	instanceRepo instance.Repository
 	eventBus     event.Dispatcher
+	engine       *instance.Engine
 }
 
 // NewTransitionInstanceUseCase creates a new use case instance.
@@ -44,11 +45,13 @@ func NewTransitionInstanceUseCase(
 	workflowRepo workflow.Repository,
 	instanceRepo instance.Repository,
 	eventBus event.Dispatcher,
+	engine *instance.Engine,
 ) *TransitionInstanceUseCase {
 	return &TransitionInstanceUseCase{
 		workflowRepo: workflowRepo,
 		instanceRepo: instanceRepo,
 		eventBus:     eventBus,
+		engine:       engine,
 	}
 }
 
@@ -103,22 +106,47 @@ func (uc *TransitionInstanceUseCase) Execute(ctx context.Context, cmd Transition
 		)
 	}
 
-	// Store previous state for result
-	previousState := inst.CurrentState()
-
-	// Create transition metadata
-	metadata := instance.NewTransitionMetadata(cmd.Reason, cmd.Feedback, cmd.Metadata)
-
-	// Update data if provided
+	// Update data if provided (before guards, so transition data can satisfy guard conditions)
 	if len(cmd.Data) > 0 {
 		for key, value := range cmd.Data {
 			inst.UpdateData(key, value)
 		}
 	}
 
+	// Evaluate guards before transition
+	if uc.engine != nil && len(evt.Guards) > 0 {
+		guardCtx := instance.GuardContext{
+			Instance: inst,
+			Event:    cmd.Event,
+			ActorID:  actorID,
+			Roles:    []string{}, // Roles will come from JWT context later
+		}
+		if err := uc.engine.EvaluateGuards(guardCtx, evt.Guards); err != nil {
+			return nil, err
+		}
+	}
+
+	// Store previous state for result
+	previousState := inst.CurrentState()
+
+	// Create transition metadata
+	metadata := instance.NewTransitionMetadata(cmd.Reason, cmd.Feedback, cmd.Metadata)
+
 	// Perform transition
-	if err := inst.Transition(evt.Destination.ID, cmd.Event, actorID, metadata); err != nil {
+	if err := inst.Transition(evt.Destination.ID, cmd.Event, actorID, metadata, evt.RequiredData); err != nil {
 		return nil, err
+	}
+
+	// Execute actions after transition
+	if uc.engine != nil && len(evt.Actions) > 0 {
+		actionCtx := instance.ActionContext{
+			Instance: inst,
+			Event:    cmd.Event,
+			ActorID:  actorID,
+		}
+		if err := uc.engine.ExecuteActions(actionCtx, evt.Actions); err != nil {
+			return nil, err
+		}
 	}
 
 	// Persist instance

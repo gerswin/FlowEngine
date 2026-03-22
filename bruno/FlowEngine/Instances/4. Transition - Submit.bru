@@ -1,0 +1,42 @@
+meta {
+  name: 4. Transition - Submit
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances/{{instanceId}}/transitions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "submit",
+        "actor_id": "{{actorId}}",
+        "reason": "Documento listo para revision",
+        "feedback": "",
+        "metadata": {
+          "submitted_from": "web_portal"
+        }
+      }
+    }
+  }
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should transition to review", function() {
+    expect(res.body.data.attributes.current_state).to.equal("review");
+    expect(res.body.data.attributes.previous_state).to.equal("draft");
+  });
+}

@@ -7,47 +7,30 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/domain/shared"
+	"github.com/LaFabric-LinkTIC/FlowEngine/pkg/jsonapi"
 )
 
-// ErrorResponse represents an error response.
-type ErrorResponse struct {
-	Error   string                 `json:"error"`
-	Message string                 `json:"message"`
-	Code    string                 `json:"code,omitempty"`
-	Context map[string]interface{} `json:"context,omitempty"`
-}
-
-// handleError converts domain errors to HTTP responses.
-func handleError(c *gin.Context, err error) {
+// handleDomainError converts domain errors to JSON:API error responses.
+// It inspects the error for a *shared.DomainError and maps its code to an
+// HTTP status. Non-domain errors fall back to 500 Internal Server Error.
+func handleDomainError(c *gin.Context, err error) {
 	var domainErr *shared.DomainError
 	if errors.As(err, &domainErr) {
-		handleDomainError(c, domainErr)
+		status := domainErrorToHTTPStatus(domainErr)
+		jsonapi.ErrorResponse(c, status, []*jsonapi.Error{
+			jsonapi.NewError(status, string(domainErr.Code()), domainErr.Message(), domainErr.Error()),
+		})
 		return
 	}
 
-	// Generic error
-	c.JSON(http.StatusInternalServerError, ErrorResponse{
-		Error:   "Internal Server Error",
-		Message: err.Error(),
+	// Generic / infrastructure error
+	jsonapi.ErrorResponse(c, http.StatusInternalServerError, []*jsonapi.Error{
+		jsonapi.NewError(http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error", err.Error()),
 	})
 }
 
-// handleDomainError converts domain errors to appropriate HTTP status codes.
-func handleDomainError(c *gin.Context, err *shared.DomainError) {
-	status := getHTTPStatus(err)
-
-	response := ErrorResponse{
-		Error:   string(err.Code()),
-		Message: err.Message(),
-		Code:    string(err.Code()),
-		Context: err.Context(),
-	}
-
-	c.JSON(status, response)
-}
-
-// getHTTPStatus maps domain error codes to HTTP status codes.
-func getHTTPStatus(err *shared.DomainError) int {
+// domainErrorToHTTPStatus maps domain error codes to HTTP status codes.
+func domainErrorToHTTPStatus(err *shared.DomainError) int {
 	switch err.Code() {
 	case shared.ErrCodeNotFound:
 		return http.StatusNotFound

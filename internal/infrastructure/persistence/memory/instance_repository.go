@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/domain/instance"
@@ -194,6 +195,40 @@ func (r *InstanceInMemoryRepository) CountByWorkflowID(ctx context.Context, work
 	}
 
 	return count, nil
+}
+
+// List retrieves a paginated list of instances, optionally filtered by workflow ID.
+func (r *InstanceInMemoryRepository) List(ctx context.Context, q shared.ListQuery, workflowID *shared.ID) ([]*instance.Instance, int64, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	// Collect matching instances
+	var filtered []*instance.Instance
+	for _, inst := range r.instances {
+		if workflowID != nil && !inst.WorkflowID().Equals(*workflowID) {
+			continue
+		}
+		filtered = append(filtered, inst)
+	}
+
+	// Sort by created_at descending for consistency with postgres
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].CreatedAt().Time().After(filtered[j].CreatedAt().Time())
+	})
+
+	total := int64(len(filtered))
+
+	// Apply offset/limit
+	start := q.Offset
+	if start > len(filtered) {
+		start = len(filtered)
+	}
+	end := start + q.Limit
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+
+	return filtered[start:end], total, nil
 }
 
 // CountByStatus returns the number of instances with a given status.

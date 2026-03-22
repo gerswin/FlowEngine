@@ -78,6 +78,7 @@ func (r *Router) Setup() *gin.Engine {
 			instances.POST("", r.instanceHandler.CreateInstance)
 			instances.GET("", r.instanceHandler.ListInstances)
 			instances.GET("/:id", r.instanceHandler.GetInstance)
+			instances.GET("/:id/history", r.instanceHandler.GetInstanceHistory)
 			instances.POST("/:id/transitions", r.instanceHandler.TransitionInstance)
 			instances.POST("/:id/clone", r.instanceHandler.CloneInstance)
 		}

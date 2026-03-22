@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/domain/shared"
@@ -138,6 +139,34 @@ func (r *WorkflowInMemoryRepository) FindAllByName(ctx context.Context, name str
 	}
 
 	return workflows, nil
+}
+
+// List retrieves a paginated list of workflows.
+func (r *WorkflowInMemoryRepository) List(ctx context.Context, q shared.ListQuery) ([]*workflow.Workflow, int64, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	all := make([]*workflow.Workflow, 0, len(r.workflows))
+	for _, wf := range r.workflows {
+		all = append(all, wf)
+	}
+
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].CreatedAt().Time().After(all[j].CreatedAt().Time())
+	})
+
+	total := int64(len(all))
+
+	start := q.Offset
+	if start > len(all) {
+		start = len(all)
+	}
+	end := start + q.Limit
+	if end > len(all) {
+		end = len(all)
+	}
+
+	return all[start:end], total, nil
 }
 
 // Exists checks if a workflow exists by ID.

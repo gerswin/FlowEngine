@@ -18,6 +18,7 @@ import (
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/infrastructure/cache"
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/infrastructure/http/handler"
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/infrastructure/http/router"
+	"github.com/LaFabric-LinkTIC/FlowEngine/internal/infrastructure/messaging"
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/infrastructure/persistence/memory"
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/infrastructure/persistence/postgres"
 	"github.com/LaFabric-LinkTIC/FlowEngine/internal/infrastructure/scheduler"
@@ -91,12 +92,14 @@ tokenService := security.NewTokenService()
 		logger.Warn("⚠️ POSTGRES_HOST not set. Using In-Memory Persistence (Data will be lost on restart)")
 		workflowRepo = memory.NewWorkflowInMemoryRepository()
 		instanceRepo = memory.NewInstanceInMemoryRepository()
-		// Memory timer repo not implemented, scheduler won't work well in memory mode
+		timerRepo = memory.NewTimerInMemoryRepository()
 		cch = nil
 	}
 
 	// --- Event System ---
-	eventBus := event.NewInMemoryDispatcher()
+	inMemoryDispatcher := event.NewInMemoryDispatcher()
+	logDispatcher := messaging.NewLogDispatcher()
+	eventBus := messaging.NewMultiDispatcher(inMemoryDispatcher, logDispatcher)
 
 	// --- Use Cases ---
 
@@ -106,7 +109,8 @@ tokenService := security.NewTokenService()
 
 	createInstanceUseCase := appInstance.NewCreateInstanceUseCase(workflowRepo, instanceRepo, eventBus)
 	getInstanceUseCase := appInstance.NewGetInstanceUseCase(instanceRepo)
-	transitionInstanceUseCase := appInstance.NewTransitionInstanceUseCase(workflowRepo, instanceRepo, eventBus)
+	transitionEngine := instance.NewEngine()
+	transitionInstanceUseCase := appInstance.NewTransitionInstanceUseCase(workflowRepo, instanceRepo, eventBus, transitionEngine)
 	cloneInstanceUseCase := appInstance.NewCloneInstanceUseCase(instanceRepo, workflowRepo, eventBus)
 
 	// --- Scheduler ---

@@ -44,6 +44,10 @@ type Repository interface {
 	// Returns an empty slice if no instances exist.
 	FindAll(ctx context.Context) ([]*Instance, error)
 
+	// List retrieves a paginated list of instances, optionally filtered by workflow ID.
+	// Returns the page of results and the total count of matching instances.
+	List(ctx context.Context, query shared.ListQuery, workflowID *shared.ID) ([]*Instance, int64, error)
+
 	// Delete deletes an instance by its ID.
 	// Returns ErrInstanceNotFound if the instance doesn't exist.
 	Delete(ctx context.Context, id shared.ID) error

@@ -1,0 +1,49 @@
+meta {
+  name: 6. Pay - Registrar Pago
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances/{{facturaId}}/transitions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "pay",
+        "actor_id": "{{actorId}}",
+        "reason": "Pago recibido por transferencia bancaria",
+        "metadata": {
+          "payment_method": "transferencia",
+          "bank": "Bancolombia",
+          "payment_reference": "REF-2026-98765"
+        },
+        "data": {
+          "payment_date": "2026-04-15",
+          "payment_method": "transferencia",
+          "payment_reference": "REF-2026-98765",
+          "amount_paid": 5950000
+        }
+      }
+    }
+  }
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should transition to pagada", function() {
+    expect(res.body.data.attributes.current_state).to.equal("pagada");
+    expect(res.body.data.attributes.previous_state).to.equal("enviada");
+  });
+}

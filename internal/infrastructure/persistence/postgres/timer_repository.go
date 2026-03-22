@@ -20,15 +20,27 @@ func NewTimerRepository(db *pgxpool.Pool) *TimerRepository {
 
 func (r *TimerRepository) Save(ctx context.Context, t *timer.Timer) error {
 	query := `
-		INSERT INTO workflow_timers (id, instance_id, state, event_on_timeout, expires_at, fired_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO workflow_timers (id, instance_id, state, event_on_timeout, expires_at, fired_at, created_at,
+			retry_count, max_retries, next_retry_at, last_error, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (id) DO UPDATE SET
-			fired_at = EXCLUDED.fired_at
+			fired_at = EXCLUDED.fired_at,
+			retry_count = EXCLUDED.retry_count,
+			max_retries = EXCLUDED.max_retries,
+			next_retry_at = EXCLUDED.next_retry_at,
+			last_error = EXCLUDED.last_error,
+			status = EXCLUDED.status
 	`
 	var firedAt *time.Time
 	if !t.FiredAt().IsZero() {
 		val := t.FiredAt().Time()
 		firedAt = &val
+	}
+
+	var nextRetryAt *time.Time
+	if !t.NextRetryAt().IsZero() {
+		val := t.NextRetryAt().Time()
+		nextRetryAt = &val
 	}
 
 	_, err := r.db.Exec(ctx, query,
@@ -39,18 +51,28 @@ func (r *TimerRepository) Save(ctx context.Context, t *timer.Timer) error {
 		t.ExpiresAt().Time(),
 		firedAt,
 		time.Now(), // CreatedAt logic usually in domain, simplified here
+		t.RetryCount(),
+		t.MaxRetries(),
+		nextRetryAt,
+		t.LastError(),
+		t.Status(),
 	)
 	return err
 }
 
 func (r *TimerRepository) FindPending(ctx context.Context, limit int) ([]*timer.Timer, error) {
 	query := `
-		SELECT id, instance_id, state, event_on_timeout, expires_at, created_at 
-		FROM workflow_timers 
-		WHERE fired_at IS NULL AND expires_at <= $1
+		SELECT id, instance_id, state, event_on_timeout, expires_at, created_at,
+			COALESCE(retry_count, 0), COALESCE(max_retries, 3), next_retry_at, COALESCE(last_error, ''), COALESCE(status, 'pending')
+		FROM workflow_timers
+		WHERE (status IS NULL OR status = 'pending')
+			AND expires_at <= $1
+			AND (next_retry_at IS NULL OR next_retry_at <= $1)
+			AND fired_at IS NULL
 		LIMIT $2
 	`
-	rows, err := r.db.Query(ctx, query, time.Now(), limit)
+	now := time.Now()
+	rows, err := r.db.Query(ctx, query, now, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -65,23 +87,33 @@ func (r *TimerRepository) FindPending(ctx context.Context, limit int) ([]*timer.
 			EventOnTimeout string
 			ExpiresAt      time.Time
 			CreatedAt      time.Time
+			RetryCount     int
+			MaxRetries     int
+			NextRetryAt    *time.Time
+			LastError      string
+			Status         string
 		}
-		if err := rows.Scan(&tData.ID, &tData.InstanceID, &tData.State, &tData.EventOnTimeout, &tData.ExpiresAt, &tData.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&tData.ID, &tData.InstanceID, &tData.State, &tData.EventOnTimeout,
+			&tData.ExpiresAt, &tData.CreatedAt,
+			&tData.RetryCount, &tData.MaxRetries, &tData.NextRetryAt, &tData.LastError, &tData.Status,
+		); err != nil {
 			return nil, err
 		}
 
 		tID, _ := shared.ParseID(tData.ID)
 		iID, _ := shared.ParseID(tData.InstanceID)
 
-		// Reconstruct (simplified, ideally use RestoreTimer)
-		// I need to add RestoreTimer to domain if fields are private.
-		// For now, assuming I can add it or Timer struct needs update.
-		// Checking Timer struct... fields are private.
-		// I need RestoreTimer.
-		
-		// WORKAROUND: I will add RestoreTimer to domain/timer/timer.go in next step.
-		// For now, assuming it exists.
-		tm := timer.RestoreTimer(tID, iID, tData.State, tData.EventOnTimeout, shared.From(tData.ExpiresAt), shared.ZeroTimestamp(), shared.From(tData.CreatedAt))
+		var nextRetryAt shared.Timestamp
+		if tData.NextRetryAt != nil {
+			nextRetryAt = shared.From(*tData.NextRetryAt)
+		}
+
+		tm := timer.RestoreTimerFull(
+			tID, iID, tData.State, tData.EventOnTimeout,
+			shared.From(tData.ExpiresAt), shared.ZeroTimestamp(), shared.From(tData.CreatedAt),
+			tData.RetryCount, tData.MaxRetries, nextRetryAt, tData.LastError, tData.Status,
+		)
 		timers = append(timers, tm)
 	}
 	return timers, nil

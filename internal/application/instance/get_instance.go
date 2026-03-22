@@ -99,6 +99,70 @@ func (uc *GetInstanceUseCase) ExecuteAll(ctx context.Context) ([]*InstanceDTO, e
 	return dtos, nil
 }
 
+// ListResult contains a paginated list of instances with total count.
+type ListResult struct {
+	Items []*InstanceDTO
+	Total int64
+}
+
+// ExecuteList retrieves a paginated list of instances, optionally filtered by workflow ID.
+func (uc *GetInstanceUseCase) ExecuteList(ctx context.Context, pageNumber, pageSize int, workflowID string) (*ListResult, error) {
+	query := shared.NewListQuery(pageNumber, pageSize)
+
+	var wfIDPtr *shared.ID
+	if workflowID != "" {
+		id, err := shared.ParseID(workflowID)
+		if err != nil {
+			return nil, instance.InvalidInstanceError("invalid workflow ID format")
+		}
+		wfIDPtr = &id
+	}
+
+	instances, total, err := uc.instanceRepo.List(ctx, query, wfIDPtr)
+	if err != nil {
+		return nil, err
+	}
+
+	dtos := make([]*InstanceDTO, len(instances))
+	for i, inst := range instances {
+		dtos[i] = uc.toDTO(inst)
+	}
+
+	return &ListResult{Items: dtos, Total: total}, nil
+}
+
+// ExecuteHistory retrieves the transition history for an instance.
+func (uc *GetInstanceUseCase) ExecuteHistory(ctx context.Context, instanceID string) ([]TransitionDTO, error) {
+	id, err := shared.ParseID(instanceID)
+	if err != nil {
+		return nil, instance.InvalidInstanceError("invalid instance ID format")
+	}
+
+	inst, err := uc.instanceRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	transitions := inst.GetTransitionHistory()
+	dtos := make([]TransitionDTO, len(transitions))
+	for i, trans := range transitions {
+		metadata := trans.Metadata()
+		dtos[i] = TransitionDTO{
+			ID:        trans.ID().String(),
+			From:      trans.From(),
+			To:        trans.To(),
+			Event:     trans.Event(),
+			Actor:     trans.Actor().String(),
+			Timestamp: trans.Timestamp().Time().Format("2006-01-02T15:04:05Z07:00"),
+			Reason:    metadata.Reason(),
+			Feedback:  metadata.Feedback(),
+			Metadata:  metadata.Metadata(),
+		}
+	}
+
+	return dtos, nil
+}
+
 func (uc *GetInstanceUseCase) toDTO(inst *instance.Instance) *InstanceDTO {
 	transitions := inst.GetTransitionHistory()
 	transitionDTOs := make([]TransitionDTO, len(transitions))

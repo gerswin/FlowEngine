@@ -1,0 +1,29 @@
+meta {
+  name: 3. Get Workflow
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/workflows/{{workflowId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should return workflow", function() {
+    expect(res.body.data.type).to.equal("workflow");
+    expect(res.body.data.id).to.equal(bru.getEnvVar("workflowId"));
+  });
+  test("should have states and events", function() {
+    expect(res.body.data.attributes.states).to.be.an("array");
+    expect(res.body.data.attributes.events).to.be.an("array");
+  });
+}

@@ -89,10 +89,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 
 	result, err := h.createUseCase.Execute(c.Request.Context(), cmd)
 	if err != nil {
-		// TODO: Map domain errors to specific status codes
-		jsonapi.ErrorResponse(c, http.StatusInternalServerError, []*jsonapi.Error{
-			jsonapi.NewError(http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create instance", err.Error()),
-		})
+		handleDomainError(c, err)
 		return
 	}
 
@@ -172,9 +169,7 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 
 	result, err := h.cloneUseCase.Execute(c.Request.Context(), cmd)
 	if err != nil {
-		jsonapi.ErrorResponse(c, http.StatusInternalServerError, []*jsonapi.Error{
-			jsonapi.NewError(http.StatusInternalServerError, "CLONE_ERROR", "Failed to clone instance", err.Error()),
-		})
+		handleDomainError(c, err)
 		return
 	}
 
@@ -195,10 +190,7 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 
 	result, err := h.getUseCase.Execute(c.Request.Context(), instanceID)
 	if err != nil {
-		// TODO: Map domain errors (Not Found) correctly
-		jsonapi.ErrorResponse(c, http.StatusNotFound, []*jsonapi.Error{
-			jsonapi.NewError(http.StatusNotFound, "NOT_FOUND", "Instance not found", err.Error()),
-		})
+		handleDomainError(c, err)
 		return
 	}
 
@@ -220,50 +212,22 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 
 // ListInstances handles GET /api/v1/instances
 func (h *InstanceHandler) ListInstances(c *gin.Context) {
-	// Parse JSON:API query options
 	queryOpts := jsonapi.ParseQueryOptions(c)
 
-	// TODO: Pass queryOpts to the use case -> repository for real filtering/pagination
-	// For now, we still fetch everything or filter by workflow_id if present in standard query (backward compatibility)
-	// In the future: h.getUseCase.ExecuteAll(ctx, queryOpts)
-
-	var results []*appInstance.InstanceDTO
-	var err error
-
-	// Support legacy query param or new filter[workflow_id]
+	// Support legacy query param or JSON:API filter
 	workflowID := c.Query("workflow_id")
 	if val, ok := queryOpts.Filters["workflow_id"]; ok {
 		workflowID = val
 	}
 
-	if workflowID != "" {
-		results, err = h.getUseCase.ExecuteByWorkflow(c.Request.Context(), workflowID)
-	} else {
-		results, err = h.getUseCase.ExecuteAll(c.Request.Context())
-	}
-
+	result, err := h.getUseCase.ExecuteList(c.Request.Context(), queryOpts.PageNumber, queryOpts.PageSize, workflowID)
 	if err != nil {
-		jsonapi.ErrorResponse(c, http.StatusInternalServerError, []*jsonapi.Error{
-			jsonapi.NewError(http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to fetch instances", err.Error()),
-		})
+		handleDomainError(c, err)
 		return
 	}
 
-	// Manual Pagination (simulation for in-memory)
-	total := len(results)
-	start := (queryOpts.PageNumber - 1) * queryOpts.PageSize
-	end := start + queryOpts.PageSize
-
-	if start > total {
-		start = total
-	}
-	if end > total {
-		end = total
-	}
-
-	paginatedResults := results[start:end]
-	resources := make([]*jsonapi.Resource, len(paginatedResults))
-	for i, res := range paginatedResults {
+	resources := make([]*jsonapi.Resource, len(result.Items))
+	for i, res := range result.Items {
 		resources[i] = jsonapi.NewResource("instance", res.ID, map[string]interface{}{
 			"workflow_id":   res.WorkflowID,
 			"current_state": res.CurrentState,
@@ -277,23 +241,50 @@ func (h *InstanceHandler) ListInstances(c *gin.Context) {
 		}
 	}
 
-	// Construct Pagination Links
-	baseLink := c.Request.URL.Path + "?"
-	// This is a simplified link generator. In production, you'd rebuild all query params.
-
+	total := int(result.Total)
+	totalPages := (total + queryOpts.PageSize - 1) / queryOpts.PageSize
 	meta := map[string]interface{}{
 		"total": total,
 		"page": map[string]int{
 			"number": queryOpts.PageNumber,
 			"size":   queryOpts.PageSize,
-			"total":  (total + queryOpts.PageSize - 1) / queryOpts.PageSize,
+			"total":  totalPages,
 		},
 	}
 
+	baseLink := c.Request.URL.Path + "?"
 	jsonapi.SuccessResponse(c, http.StatusOK, resources, meta, &jsonapi.Links{
 		Self:  c.Request.URL.String(),
 		First: baseLink + "page[number]=1&page[size]=" + strconv.Itoa(queryOpts.PageSize),
-		// Add Next/Prev/Last logic here
+	})
+}
+
+// GetInstanceHistory handles GET /api/v1/instances/:id/history
+func (h *InstanceHandler) GetInstanceHistory(c *gin.Context) {
+	instanceID := c.Param("id")
+
+	transitions, err := h.getUseCase.ExecuteHistory(c.Request.Context(), instanceID)
+	if err != nil {
+		handleDomainError(c, err)
+		return
+	}
+
+	resources := make([]*jsonapi.Resource, len(transitions))
+	for i, t := range transitions {
+		resources[i] = jsonapi.NewResource("transition", t.ID, map[string]interface{}{
+			"from":      t.From,
+			"to":        t.To,
+			"event":     t.Event,
+			"actor":     t.Actor,
+			"timestamp": t.Timestamp,
+			"reason":    t.Reason,
+			"feedback":  t.Feedback,
+			"metadata":  t.Metadata,
+		})
+	}
+
+	jsonapi.SuccessResponse(c, http.StatusOK, resources, nil, &jsonapi.Links{
+		Self: "/api/v1/instances/" + instanceID + "/history",
 	})
 }
 
@@ -328,10 +319,7 @@ func (h *InstanceHandler) TransitionInstance(c *gin.Context) {
 
 	result, err := h.transitionUseCase.Execute(c.Request.Context(), cmd)
 	if err != nil {
-		// TODO: Map domain errors (Conflict, Invalid Transition) correctly
-		jsonapi.ErrorResponse(c, http.StatusConflict, []*jsonapi.Error{
-			jsonapi.NewError(http.StatusConflict, "TRANSITION_ERROR", "Failed to transition instance", err.Error()),
-		})
+		handleDomainError(c, err)
 		return
 	}
 

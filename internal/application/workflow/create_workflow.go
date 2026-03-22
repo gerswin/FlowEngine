@@ -20,17 +20,32 @@ type CreateWorkflowCommand struct {
 
 // StateDTO represents a state in the workflow definition.
 type StateDTO struct {
-	ID          string
-	Name        string
-	Description string
-	IsFinal     bool
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	IsFinal     bool   `json:"is_final,omitempty"`
+}
+
+// GuardDTO represents a guard condition in the workflow definition.
+type GuardDTO struct {
+	Type   string                 `json:"type"`
+	Params map[string]interface{} `json:"params,omitempty"`
+}
+
+// ActionDTO represents an action to execute during transition.
+type ActionDTO struct {
+	Type   string                 `json:"type"`
+	Params map[string]interface{} `json:"params,omitempty"`
 }
 
 // EventDTO represents an event (transition) in the workflow definition.
 type EventDTO struct {
-	Name        string
-	Sources     []string // State IDs
-	Destination string   // State ID
+	Name         string      `json:"name"`
+	Sources      []string    `json:"sources"`
+	Destination  string      `json:"destination"`
+	RequiredData []string    `json:"required_data,omitempty"`
+	Guards       []GuardDTO  `json:"guards,omitempty"`
+	Actions      []ActionDTO `json:"actions,omitempty"`
 }
 
 // CreateWorkflowResult contains the created workflow data.
@@ -198,5 +213,32 @@ func (uc *CreateWorkflowUseCase) createEvent(wf *workflow.Workflow, dto EventDTO
 		return workflow.Event{}, err
 	}
 
-	return workflow.NewEvent(dto.Name, sources, destination)
+	event, err := workflow.NewEvent(dto.Name, sources, destination)
+	if err != nil {
+		return workflow.Event{}, err
+	}
+
+	if len(dto.RequiredData) > 0 {
+		event = event.WithRequiredData(dto.RequiredData)
+	}
+
+	// Map guard DTOs to domain GuardConfig
+	var guards []workflow.GuardConfig
+	for _, g := range dto.Guards {
+		guards = append(guards, workflow.GuardConfig{Type: g.Type, Params: g.Params})
+	}
+	if len(guards) > 0 {
+		event = event.WithGuards(guards)
+	}
+
+	// Map action DTOs to domain ActionConfig
+	var actions []workflow.ActionConfig
+	for _, a := range dto.Actions {
+		actions = append(actions, workflow.ActionConfig{Type: a.Type, Params: a.Params})
+	}
+	if len(actions) > 0 {
+		event = event.WithActions(actions)
+	}
+
+	return event, nil
 }

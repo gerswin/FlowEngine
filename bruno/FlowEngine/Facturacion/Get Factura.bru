@@ -1,0 +1,25 @@
+meta {
+  name: Get Factura
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/v1/instances/{{facturaId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should return factura data", function() {
+    expect(res.body.data.attributes.data).to.be.an("object");
+    expect(res.body.data.attributes.variables).to.be.an("object");
+  });
+}

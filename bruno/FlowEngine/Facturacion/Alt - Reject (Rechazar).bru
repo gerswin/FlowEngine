@@ -1,0 +1,47 @@
+meta {
+  name: Alt - Reject (Rechazar)
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances/{{facturaId}}/transitions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "reject",
+        "actor_id": "{{reviewerId}}",
+        "reason": "Monto incorrecto en linea de consultoria",
+        "feedback": "Revisar cantidad de horas. El contrato especifica 60 horas, no 80.",
+        "metadata": {
+          "rejected_field": "items[0].quantity",
+          "expected_value": 60
+        },
+        "data": {
+          "rejection_reason": "Monto incorrecto en linea de consultoria",
+          "rejection_count": 1
+        }
+      }
+    }
+  }
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should return to borrador", function() {
+    expect(res.body.data.attributes.current_state).to.equal("borrador");
+    expect(res.body.data.attributes.previous_state).to.equal("pendiente_aprobacion");
+  });
+}

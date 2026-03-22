@@ -1,0 +1,48 @@
+meta {
+  name: 5. Transition - Approve
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances/{{instanceId}}/transitions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "approve",
+        "actor_id": "{{reviewerId}}",
+        "reason": "Propuesta aprobada por el comite ejecutivo",
+        "feedback": "Excelente propuesta. Presupuesto aprobado.",
+        "metadata": {
+          "reviewer": "Maria Garcia",
+          "review_score": 95,
+          "approved_amount": 50000
+        },
+        "data": {
+          "approval_date": "2025-01-19",
+          "approved_by": "Maria Garcia"
+        }
+      }
+    }
+  }
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should transition to approved", function() {
+    expect(res.body.data.attributes.current_state).to.equal("approved");
+    expect(res.body.data.attributes.previous_state).to.equal("review");
+  });
+}

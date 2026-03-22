@@ -1,0 +1,46 @@
+meta {
+  name: 5. Send - Enviar al Cliente
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances/{{facturaId}}/transitions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "send",
+        "actor_id": "{{actorId}}",
+        "reason": "Factura enviada al cliente por correo electronico",
+        "metadata": {
+          "sent_method": "email",
+          "recipient_email": "contabilidad@acme.com.co"
+        },
+        "data": {
+          "sent_date": "2026-03-20",
+          "sent_method": "email"
+        }
+      }
+    }
+  }
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should transition to enviada", function() {
+    expect(res.body.data.attributes.current_state).to.equal("enviada");
+    expect(res.body.data.attributes.previous_state).to.equal("aprobada");
+  });
+}

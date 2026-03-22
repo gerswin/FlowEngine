@@ -1,0 +1,25 @@
+meta {
+  name: 7. Not Found
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/v1/instances/00000000-0000-0000-0000-000000000000
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+tests {
+  test("should return 404", function() {
+    expect(res.status).to.equal(404);
+  });
+  test("should return NOT_FOUND error", function() {
+    expect(res.body.errors).to.be.an("array");
+    expect(res.body.errors[0].code).to.equal("NOT_FOUND");
+  });
+}

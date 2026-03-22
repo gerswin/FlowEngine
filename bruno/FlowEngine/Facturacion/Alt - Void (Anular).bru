@@ -1,0 +1,47 @@
+meta {
+  name: Alt - Void (Anular)
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances/{{facturaId}}/transitions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "void",
+        "actor_id": "{{reviewerId}}",
+        "reason": "Factura anulada por error en datos del cliente",
+        "feedback": "NIT incorrecto. Se debe generar nueva factura con datos corregidos.",
+        "metadata": {
+          "void_type": "error_datos",
+          "replacement_invoice": "pendiente"
+        },
+        "data": {
+          "void_reason": "Error en datos del cliente",
+          "voided_by": "Maria Garcia",
+          "void_date": "2026-03-21"
+        }
+      }
+    }
+  }
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should transition to anulada", function() {
+    expect(res.body.data.attributes.current_state).to.equal("anulada");
+  });
+}

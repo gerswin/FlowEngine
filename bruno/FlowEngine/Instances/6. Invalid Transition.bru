@@ -1,0 +1,38 @@
+meta {
+  name: 6. Invalid Transition
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances/{{instanceId}}/transitions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "submit",
+        "actor_id": "{{actorId}}",
+        "reason": "This should fail - instance is already approved"
+      }
+    }
+  }
+}
+
+tests {
+  test("should return conflict or error", function() {
+    expect(res.status).to.be.oneOf([400, 409]);
+  });
+  test("should have error response", function() {
+    expect(res.body.errors).to.be.an("array");
+    expect(res.body.errors.length).to.be.greaterThan(0);
+  });
+}

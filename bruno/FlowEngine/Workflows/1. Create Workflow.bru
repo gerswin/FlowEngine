@@ -1,0 +1,100 @@
+meta {
+  name: 1. Create Workflow
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/workflows
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "workflow",
+      "attributes": {
+        "name": "Proceso de Aprobacion",
+        "description": "Workflow simple de aprobacion con 4 estados",
+        "created_by": "{{actorId}}",
+        "initial_state": {
+          "id": "draft",
+          "name": "Borrador",
+          "description": "Documento en borrador",
+          "is_final": false
+        },
+        "states": [
+          {
+            "id": "draft",
+            "name": "Borrador",
+            "description": "Documento en borrador",
+            "is_final": false
+          },
+          {
+            "id": "review",
+            "name": "En Revision",
+            "description": "Documento siendo revisado",
+            "is_final": false
+          },
+          {
+            "id": "approved",
+            "name": "Aprobado",
+            "description": "Documento aprobado",
+            "is_final": true
+          },
+          {
+            "id": "rejected",
+            "name": "Rechazado",
+            "description": "Documento rechazado",
+            "is_final": true
+          }
+        ],
+        "events": [
+          {
+            "name": "submit",
+            "sources": ["draft"],
+            "destination": "review"
+          },
+          {
+            "name": "approve",
+            "sources": ["review"],
+            "destination": "approved"
+          },
+          {
+            "name": "reject",
+            "sources": ["review"],
+            "destination": "rejected"
+          }
+        ]
+      }
+    }
+  }
+}
+
+vars:pre-request {
+  baseUrl: http://localhost:8090
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setEnvVar("workflowId", res.body.data.id);
+  }
+}
+
+tests {
+  test("should return 201", function() {
+    expect(res.status).to.equal(201);
+  });
+  test("should return workflow resource", function() {
+    expect(res.body.data.type).to.equal("workflow");
+    expect(res.body.data.id).to.be.a("string");
+  });
+  test("should have correct name", function() {
+    expect(res.body.data.attributes.name).to.equal("Proceso de Aprobacion");
+  });
+}

@@ -242,11 +242,6 @@ func (w *Workflow) GetEvent(eventName string) (Event, error) {
 	return event, nil
 }
 
-// FindEvent is an alias for GetEvent (for backwards compatibility).
-func (w *Workflow) FindEvent(eventName string) (Event, error) {
-	return w.GetEvent(eventName)
-}
-
 // HasEvent checks if an event exists in the workflow.
 func (w *Workflow) HasEvent(eventName string) bool {
 	_, exists := w.events[eventName]

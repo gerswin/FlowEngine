@@ -280,12 +280,12 @@ func (i *Instance) UpdateVariable(key string, value interface{}) {
 }
 
 // Transition performs a state transition with the given event.
-func (i *Instance) Transition(toState, eventName string, actor shared.ID, metadata TransitionMetadata) error {
-	return i.TransitionWithSubState(toState, ZeroSubState(), eventName, actor, metadata)
+func (i *Instance) Transition(toState, eventName string, actor shared.ID, metadata TransitionMetadata, requiredData []string) error {
+	return i.TransitionWithSubState(toState, ZeroSubState(), eventName, actor, metadata, requiredData)
 }
 
 // TransitionWithSubState performs a state transition with sub-state support (R17, R23).
-func (i *Instance) TransitionWithSubState(toState string, toSubState SubState, eventName string, actor shared.ID, metadata TransitionMetadata) error {
+func (i *Instance) TransitionWithSubState(toState string, toSubState SubState, eventName string, actor shared.ID, metadata TransitionMetadata, requiredData []string) error {
 	// Validate instance can transition
 	if !i.IsActive() {
 		return InstanceNotActiveError(i.id, i.status)
@@ -307,6 +307,19 @@ func (i *Instance) TransitionWithSubState(toState string, toSubState SubState, e
 	if !toSubState.IsZero() {
 		if err := toSubState.Validate(); err != nil {
 			return InvalidInstanceError(fmt.Sprintf("invalid sub-state: %v", err))
+		}
+	}
+
+	// Validate required data fields
+	if len(requiredData) > 0 {
+		var missingFields []string
+		for _, field := range requiredData {
+			if !i.data.Has(field) {
+				missingFields = append(missingFields, field)
+			}
+		}
+		if len(missingFields) > 0 {
+			return MissingRequiredDataError(eventName, missingFields)
 		}
 	}
 

@@ -75,9 +75,7 @@ func (h *WorkflowHandler) CreateWorkflow(c *gin.Context) {
 
 	result, err := h.createUseCase.Execute(c.Request.Context(), cmd)
 	if err != nil {
-		jsonapi.ErrorResponse(c, http.StatusInternalServerError, []*jsonapi.Error{
-			jsonapi.NewError(http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create workflow", err.Error()),
-		})
+		handleDomainError(c, err)
 		return
 	}
 
@@ -104,9 +102,7 @@ func (h *WorkflowHandler) GetWorkflow(c *gin.Context) {
 
 	result, err := h.getUseCase.Execute(c.Request.Context(), workflowID)
 	if err != nil {
-		jsonapi.ErrorResponse(c, http.StatusNotFound, []*jsonapi.Error{
-			jsonapi.NewError(http.StatusNotFound, "NOT_FOUND", "Workflow not found", err.Error()),
-		})
+		handleDomainError(c, err)
 		return
 	}
 
@@ -129,29 +125,14 @@ func (h *WorkflowHandler) GetWorkflow(c *gin.Context) {
 func (h *WorkflowHandler) ListWorkflows(c *gin.Context) {
 	queryOpts := jsonapi.ParseQueryOptions(c)
 
-	results, err := h.getUseCase.ExecuteAll(c.Request.Context())
+	result, err := h.getUseCase.ExecuteList(c.Request.Context(), queryOpts.PageNumber, queryOpts.PageSize)
 	if err != nil {
-		jsonapi.ErrorResponse(c, http.StatusInternalServerError, []*jsonapi.Error{
-			jsonapi.NewError(http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to fetch workflows", err.Error()),
-		})
+		handleDomainError(c, err)
 		return
 	}
 
-	// Manual Pagination (simulation)
-	total := len(results)
-	start := (queryOpts.PageNumber - 1) * queryOpts.PageSize
-	end := start + queryOpts.PageSize
-
-	if start > total {
-		start = total
-	}
-	if end > total {
-		end = total
-	}
-
-	paginatedResults := results[start:end]
-	resources := make([]*jsonapi.Resource, len(paginatedResults))
-	for i, res := range paginatedResults {
+	resources := make([]*jsonapi.Resource, len(result.Items))
+	for i, res := range result.Items {
 		resources[i] = jsonapi.NewResource("workflow", res.ID, map[string]interface{}{
 			"name":        res.Name,
 			"description": res.Description,
@@ -164,12 +145,14 @@ func (h *WorkflowHandler) ListWorkflows(c *gin.Context) {
 		}
 	}
 
+	total := int(result.Total)
+	totalPages := (total + queryOpts.PageSize - 1) / queryOpts.PageSize
 	meta := map[string]interface{}{
 		"total": total,
 		"page": map[string]int{
 			"number": queryOpts.PageNumber,
 			"size":   queryOpts.PageSize,
-			"total":  (total + queryOpts.PageSize - 1) / queryOpts.PageSize,
+			"total":  totalPages,
 		},
 	}
 
@@ -287,9 +270,7 @@ func (h *WorkflowHandler) CreateWorkflowFromYAML(c *gin.Context) {
 			})
 			return
 		default:
-			jsonapi.ErrorResponse(c, http.StatusInternalServerError, []*jsonapi.Error{
-				jsonapi.NewError(http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create workflow", err.Error()),
-			})
+			handleDomainError(c, err)
 			return
 		}
 	}

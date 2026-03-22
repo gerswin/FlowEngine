@@ -1,0 +1,42 @@
+meta {
+  name: Alt - Mark Overdue (Vencida)
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances/{{facturaId}}/transitions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "transition",
+      "attributes": {
+        "event": "mark_overdue",
+        "actor_id": "{{actorId}}",
+        "reason": "Plazo de pago vencido. 30 dias sin respuesta del cliente.",
+        "metadata": {
+          "days_overdue": 5,
+          "reminder_sent": true
+        }
+      }
+    }
+  }
+}
+
+tests {
+  test("should return 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("should transition to vencida", function() {
+    expect(res.body.data.attributes.current_state).to.equal("vencida");
+    expect(res.body.data.attributes.previous_state).to.equal("enviada");
+  });
+}

@@ -1,0 +1,73 @@
+meta {
+  name: 2. Create Factura
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "instance",
+      "attributes": {
+        "workflow_id": "{{facturacionWorkflowId}}",
+        "started_by": "{{actorId}}",
+        "data": {
+          "invoice_number": "FAC-2026-00142",
+          "client_id": "c1a2b3c4-d5e6-7890-abcd-ef1234567890",
+          "client_name": "Acme Corp S.A.S.",
+          "client_nit": "900123456-7",
+          "issue_date": "2026-03-19",
+          "due_date": "2026-04-18",
+          "currency": "COP",
+          "subtotal": 5000000,
+          "tax_rate": 0.19,
+          "tax_amount": 950000,
+          "total": 5950000,
+          "items": [
+            {
+              "description": "Consultoria IT - Marzo 2026",
+              "quantity": 80,
+              "unit_price": 62500,
+              "amount": 5000000
+            }
+          ],
+          "notes": "Pago a 30 dias. Transferencia a cuenta Bancolombia 123-456789-00"
+        },
+        "variables": {
+          "payment_terms_days": 30,
+          "approval_required_above": 1000000,
+          "max_rejections": 3,
+          "overdue_reminder_days": 7,
+          "department": "ventas",
+          "cost_center": "CC-200",
+          "priority": "normal"
+        }
+      }
+    }
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setEnvVar("facturaId", res.body.data.id);
+  }
+}
+
+tests {
+  test("should return 201", function() {
+    expect(res.status).to.equal(201);
+  });
+  test("should be in borrador state", function() {
+    expect(res.body.data.attributes.current_state).to.equal("borrador");
+  });
+}

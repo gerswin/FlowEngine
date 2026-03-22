@@ -30,6 +30,10 @@ type Repository interface {
 	// Returns an empty slice if no workflows exist.
 	FindAll(ctx context.Context) ([]*Workflow, error)
 
+	// List retrieves a paginated list of workflows.
+	// Returns the page of results and the total count.
+	List(ctx context.Context, query shared.ListQuery) ([]*Workflow, int64, error)
+
 	// FindAllByName retrieves all versions of a workflow by name.
 	// Returns an empty slice if no workflows with the given name exist.
 	FindAllByName(ctx context.Context, name string) ([]*Workflow, error)

@@ -7,10 +7,13 @@ import (
 // Event represents a transition event in a workflow.
 // It's an entity that records the history of state changes.
 type Event struct {
-	Name        string   `json:"name"`
-	Sources     []State  `json:"sources"`
-	Destination State    `json:"destination"`
-	Validators  []string `json:"validators"`
+	Name         string         `json:"name"`
+	Sources      []State        `json:"sources"`
+	Destination  State          `json:"destination"`
+	Validators   []string       `json:"validators"`
+	RequiredData []string       `json:"required_data,omitempty"`
+	Guards       []GuardConfig  `json:"guards,omitempty"`
+	Actions      []ActionConfig `json:"actions,omitempty"`
 }
 
 // NewEvent creates a new Event.
@@ -75,6 +78,69 @@ func (e Event) WithValidators(validators []string) Event {
 		copy(e.Validators, validators)
 	}
 	return e
+}
+
+// WithRequiredData returns a new Event with the given required data fields.
+func (e Event) WithRequiredData(fields []string) Event {
+	if fields == nil {
+		e.RequiredData = []string{}
+	} else {
+		e.RequiredData = make([]string, len(fields))
+		copy(e.RequiredData, fields)
+	}
+	return e
+}
+
+// GetRequiredData returns a copy of the required data field names.
+func (e Event) GetRequiredData() []string {
+	if e.RequiredData == nil {
+		return []string{}
+	}
+	fieldsCopy := make([]string, len(e.RequiredData))
+	copy(fieldsCopy, e.RequiredData)
+	return fieldsCopy
+}
+
+// WithGuards returns a new Event with the given guards.
+func (e Event) WithGuards(guards []GuardConfig) Event {
+	if guards == nil {
+		e.Guards = []GuardConfig{}
+	} else {
+		e.Guards = make([]GuardConfig, len(guards))
+		copy(e.Guards, guards)
+	}
+	return e
+}
+
+// WithActions returns a new Event with the given actions.
+func (e Event) WithActions(actions []ActionConfig) Event {
+	if actions == nil {
+		e.Actions = []ActionConfig{}
+	} else {
+		e.Actions = make([]ActionConfig, len(actions))
+		copy(e.Actions, actions)
+	}
+	return e
+}
+
+// GetGuards returns a copy of the guard configurations.
+func (e Event) GetGuards() []GuardConfig {
+	if e.Guards == nil {
+		return []GuardConfig{}
+	}
+	guardsCopy := make([]GuardConfig, len(e.Guards))
+	copy(guardsCopy, e.Guards)
+	return guardsCopy
+}
+
+// GetActions returns a copy of the action configurations.
+func (e Event) GetActions() []ActionConfig {
+	if e.Actions == nil {
+		return []ActionConfig{}
+	}
+	actionsCopy := make([]ActionConfig, len(e.Actions))
+	copy(actionsCopy, e.Actions)
+	return actionsCopy
 }
 
 // CanTransitionFrom checks if this event can transition from the given state.

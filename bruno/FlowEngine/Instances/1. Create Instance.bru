@@ -1,0 +1,61 @@
+meta {
+  name: 1. Create Instance
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/instances
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "data": {
+      "type": "instance",
+      "attributes": {
+        "workflow_id": "{{workflowId}}",
+        "started_by": "{{actorId}}",
+        "data": {
+          "title": "Propuesta de Proyecto Q1 2025",
+          "requester": "Juan Perez",
+          "department": "IT",
+          "amount": 50000
+        },
+        "variables": {
+          "priority": "high",
+          "sla_hours": 48
+        }
+      }
+    }
+  }
+}
+
+vars:pre-request {
+  baseUrl: http://localhost:8090
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setEnvVar("instanceId", res.body.data.id);
+  }
+}
+
+tests {
+  test("should return 201", function() {
+    expect(res.status).to.equal(201);
+  });
+  test("should return instance", function() {
+    expect(res.body.data.type).to.equal("instance");
+    expect(res.body.data.id).to.be.a("string");
+  });
+  test("should be in draft state", function() {
+    expect(res.body.data.attributes.current_state).to.equal("draft");
+    expect(res.body.data.attributes.status).to.equal("running");
+  });
+}

@@ -64,3 +64,18 @@ func NewResource(resourceType, id string, attributes map[string]interface{}) *Re
 		Attributes: attributes,
 	}
 }
+
+// Paginate slices items to the page described by opts and returns the page
+// along with the total number of items before slicing.
+func Paginate[T any](items []T, opts QueryOptions) (page []T, total int) {
+	total = len(items)
+	start := (opts.PageNumber - 1) * opts.PageSize
+	end := start + opts.PageSize
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+	return items[start:end], total
+}
